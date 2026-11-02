@@ -1,0 +1,150 @@
+# ==============================================================================
+# JAMUI SERVICES — ROOT .GITIGNORE (HARDENED REPOSITORY BASELINE)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Node.js & Dependencies
+# ------------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+package-lock.json.bak
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------------------------------------------------------
+# 2. Secret Configuration & Environment Files
+# ------------------------------------------------------------------------------
+.env
+.env.*
+*.env
+*.env.*
+**/.env
+**/.env.*
+**/ephemeral/*.env
+!*.env.example
+!**/*.env.example
+
+# Service accounts, credentials, and API private keys
+*serviceAccount*.json
+*service-account*.json
+*service_account*.json
+**/*serviceAccount*.json
+**/*service-account*.json
+**/*service_account*.json
+**/credentials*.json
+**/client_secret*.json
+
+# Keystores, signing keys, and certificates
+*.jks
+*.keystore
+**/*.jks
+**/*.keystore
+*.key
+*.pem
+*.p12
+*.p8
+*.pfx
+key.properties
+**/key.properties
+!key.properties.example
+!**/key.properties.example
+signing.properties
+**/signing.properties
+!signing.properties.example
+!**/signing.properties.example
+local.properties
+**/local.properties
+
+# Mobile credentials / configs with embedded keys
+google-services.json
+**/google-services.json
+GoogleService-Info.plist
+**/GoogleService-Info.plist
+
+# ------------------------------------------------------------------------------
+# 3. Firebase CLI, Emulators, & Local Runtime Artifacts
+# ------------------------------------------------------------------------------
+.firebase/
+**/.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+hub-debug.log*
+*-debug.log*
+*.local
+firebase.json.bak
+brain_db_hits.json
+scratch_log.txt
+temp_appdata/
+
+# ------------------------------------------------------------------------------
+# 4. Flutter / Dart / Pub Build Outputs & Caches
+# ------------------------------------------------------------------------------
+.dart_tool/
+**/.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+**/doc/api/
+build/
+**/build/
+coverage/
+**/coverage/
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+.widget_preview/
+
+# Symbolication & Obfuscation
+app.*.symbols
+app.*.map.json
+
+# ------------------------------------------------------------------------------
+# 5. OS & IDE Specific Files
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Windows shortcuts / temp
+*.lnk
+*.bak
+*.tmp
+*.swp
+*~
+
+# IntelliJ / Android Studio
+.idea/
+**/.idea/
+*.iml
+**/*.iml
+*.ipr
+*.iws
+
+# Visual Studio Code
+.vscode/
+**/.vscode/
+
+# Build caches & Native Android/iOS artifacts
+.gradle/
+**/.gradle/
+gradle-wrapper.jar
+**/gradle-wrapper.jar
+captures/
+**/captures/
+.cxx/
+**/.cxx/
+Pods/
+**/Pods/
+*.xcworkspace/
+*.xcuserdatad/
+DerivedData/

@@ -1,0 +1,93 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.email != null && (
+        request.auth.token.email == 'admin@jamuiservice.com'
+      );
+    }
+
+    // Profile Images (Public Read, Owner Write, Max 5MB)
+    match /profile_images/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && request.auth.uid == userId 
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+    }
+
+    // Customer Review Photos (Public Read, Verified Customer Owner Write/Delete, Max 5MB)
+    match /review_photos/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAuthenticated() && request.auth.uid == userId
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+      allow delete: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // Provider Private Certificates / Documents (Private: Owner and Admin only)
+    match /providers/{userId}/certificates/{fileName} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAuthenticated() && request.auth.uid == userId
+                   && request.resource.size < 8 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)|application/pdf');
+      allow delete: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /providers/{userId}/kyc/{fileName} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAuthenticated() && request.auth.uid == userId
+                   && request.resource.size < 8 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)|application/pdf');
+      allow delete: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // Provider Workspace / Portfolio / Public Business Images (Public Read, Owner Write, Max 8MB)
+    match /providers/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAuthenticated() && request.auth.uid == userId
+                   && request.resource.size < 8 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+    }
+
+    // Category Images (Public Read, Strictly Admin Write & Delete, Max 10MB)
+    match /category_images/{categoryId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin()
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp|svg\\+xml)');
+      allow delete: if isAdmin();
+    }
+
+    // Promotional & Sponsor Banners (Public Read, Strictly Admin Write & Delete, Max 10MB)
+    match /banners/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin()
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+      allow delete: if isAdmin();
+    }
+
+    match /sponsor_banners/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin()
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+      allow delete: if isAdmin();
+    }
+
+    // KYC Documents (Aadhaar / Certificates - Strictly Owner and Admin Read/Write)
+    match /kyc_documents/{userId}/{fileName} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAuthenticated() && request.auth.uid == userId 
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)|application/pdf');
+      allow delete: if isAdmin();
+    }
+  }
+}

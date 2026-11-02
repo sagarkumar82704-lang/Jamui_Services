@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head><title>R2 Browser Upload Test</title></head>
+<body>
+  <h2>R2 Browser Upload Test</h2>
+  <button id="runTest">Run Test</button>
+  <div id="log" style="white-space: pre; font-family: monospace;"></div>
+  <script>
+    const log = document.getElementById('log');
+    function print(msg) { log.innerText += msg + '\n'; console.log(msg); }
+
+    async function run() {
+      print('Starting browser tests...');
+      const dummyBytes = new Uint8Array(128).fill(255);
+
+      // Test 1: Fetch with current URL (signed with content-length)
+      print('\n--- Test 1: fetch with Content-Length signed URL ---');
+      try {
+        const res1 = await fetch("https://de904e9de3f0488b0e98681f4779d16d.r2.cloudflarestorage.com/jamui-services-public-prod/providers/test_user/profile/test_browser_cl.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=e55543b8a6e67885153b43b86fe68c70%2F20261025%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261025T175455Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=a3bdc6c30d4c52273b7ca570de49682a2daf894ae17635fb7297e5a13af9019f", {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'image/jpeg'
+          },
+          body: dummyBytes
+        });
+        print('Test 1 (fetch without setting Content-Length header): Status ' + res1.status);
+        if (!res1.ok) {
+          const text = await res1.text();
+          print('Test 1 error body: ' + text);
+        }
+      } catch (err) {
+        print('Test 1 Fetch error: ' + err);
+      }
+
+      // Test 2: Fetch trying to set Content-Length header
+      print('\n--- Test 2: fetch explicitly passing Content-Length header ---');
+      try {
+        const res2 = await fetch("https://de904e9de3f0488b0e98681f4779d16d.r2.cloudflarestorage.com/jamui-services-public-prod/providers/test_user/profile/test_browser_cl.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=e55543b8a6e67885153b43b86fe68c70%2F20261025%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261025T175455Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=a3bdc6c30d4c52273b7ca570de49682a2daf894ae17635fb7297e5a13af9019f", {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Content-Length': '128'
+          },
+          body: dummyBytes
+        });
+        print('Test 2: Status ' + res2.status);
+        if (!res2.ok) {
+          const text = await res2.text();
+          print('Test 2 error body: ' + text);
+        }
+      } catch (err) {
+        print('Test 2 Fetch error: ' + err);
+      }
+
+      // Test 3: XHR (like Flutter Web BrowserClient does)
+      print('\n--- Test 3: XHR (like Flutter BrowserClient) with Content-Length signed URL ---');
+      try {
+        await new Promise((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', "https://de904e9de3f0488b0e98681f4779d16d.r2.cloudflarestorage.com/jamui-services-public-prod/providers/test_user/profile/test_browser_cl.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=e55543b8a6e67885153b43b86fe68c70%2F20261025%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261025T175455Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=a3bdc6c30d4c52273b7ca570de49682a2daf894ae17635fb7297e5a13af9019f");
+          xhr.setRequestHeader('Content-Type', 'image/jpeg');
+          try {
+            xhr.setRequestHeader('Content-Length', '128');
+          } catch(e) {
+            print('XHR setRequestHeader Content-Length exception: ' + e);
+          }
+          xhr.onload = () => {
+            print('Test 3 XHR Status: ' + xhr.status + ', response: ' + xhr.responseText);
+            resolve();
+          };
+          xhr.onerror = (e) => {
+            print('Test 3 XHR Error (status: ' + xhr.status + ')');
+            resolve();
+          };
+          xhr.send(dummyBytes);
+        });
+      } catch (err) {
+        print('Test 3 Exception: ' + err);
+      }
+
+      // Test 4: URL WITHOUT Content-Length in signedHeaders
+      print('\n--- Test 4: fetch with URL WITHOUT Content-Length in signedHeaders ---');
+      try {
+        const res4 = await fetch("https://de904e9de3f0488b0e98681f4779d16d.r2.cloudflarestorage.com/jamui-services-public-prod/providers/test_user/profile/test_browser_no_cl.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=e55543b8a6e67885153b43b86fe68c70%2F20261025%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261025T175455Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-type%3Bhost&X-Amz-Signature=7963b40eaa9af41bf2be15a1904836ce887eea4d34532cca9ee411bbfd8e8401", {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'image/jpeg'
+          },
+          body: dummyBytes
+        });
+        print('Test 4 (no Content-Length in signedHeaders): Status ' + res4.status);
+        if (!res4.ok) {
+          const text = await res4.text();
+          print('Test 4 error body: ' + text);
+        }
+      } catch (err) {
+        print('Test 4 Fetch error: ' + err);
+      }
+
+      // Test 5: XHR with URL WITHOUT Content-Length in signedHeaders
+      print('\n--- Test 5: XHR with URL WITHOUT Content-Length in signedHeaders ---');
+      try {
+        await new Promise((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', "https://de904e9de3f0488b0e98681f4779d16d.r2.cloudflarestorage.com/jamui-services-public-prod/providers/test_user/profile/test_browser_no_cl.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=e55543b8a6e67885153b43b86fe68c70%2F20261025%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261025T175455Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-type%3Bhost&X-Amz-Signature=7963b40eaa9af41bf2be15a1904836ce887eea4d34532cca9ee411bbfd8e8401");
+          xhr.setRequestHeader('Content-Type', 'image/jpeg');
+          xhr.onload = () => {
+            print('Test 5 XHR Status: ' + xhr.status + ', response: ' + xhr.responseText);
+            resolve();
+          };
+          xhr.onerror = (e) => {
+            print('Test 5 XHR Error (status: ' + xhr.status + ')');
+            resolve();
+          };
+          xhr.send(dummyBytes);
+        });
+      } catch (err) {
+        print('Test 5 Exception: ' + err);
+      }
+
+      print('\n--- ALL TESTS COMPLETE ---');
+    }
+
+    document.getElementById('runTest').onclick = run;
+    window.onload = run;
+  </script>
+</body>
+</html>

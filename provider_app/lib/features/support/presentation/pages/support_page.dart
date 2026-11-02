@@ -1,0 +1,892 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/company_settings_service.dart';
+import '../../../auth/domain/entities/provider_profile_entity.dart';
+
+class SupportPage extends StatefulWidget {
+  final ProviderProfileEntity profile;
+
+  const SupportPage({super.key, required this.profile});
+
+  @override
+  State<SupportPage> createState() => _SupportPageState();
+}
+
+class _SupportPageState extends State<SupportPage> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final _formKey = GlobalKey<FormState>();
+
+  final _subjectController = TextEditingController();
+  final _messageController = TextEditingController();
+
+  String _selectedCategory = 'पेमेंट व पेआउट समस्या (Payout & Billing)';
+  bool _isSubmitting = false;
+
+  final List<String> _categories = [
+    'पेमेंट व पेआउट समस्या (Payout & Billing)',
+    'केवाईसी व प्रोफाइल सत्यापन (KYC & Profile)',
+    'बुकिंग / कस्टमर विवाद (Booking & Customer Dispute)',
+    'ऐप व तकनीकी समस्या (App & Technical)',
+    'सब्सक्रिप्शन / प्लान (Subscription & Plan)',
+    'अन्य सामान्य सहायता (General Support)',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _subjectController.dispose();
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitComplaint() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    setState(() => _isSubmitting = true);
+    try {
+      final compRef = FirebaseFirestore.instance.collection('complaints').doc();
+      final ticketNumber =
+          'TKT-PROV-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
+
+      final description = _messageController.text.trim();
+      final subject = _subjectController.text.trim();
+      final nowTimestamp = Timestamp.now();
+
+      final ticketData = {
+        'ticketId': ticketNumber,
+        'complaintId': compRef.id,
+        'id': compRef.id,
+        'ownerUid': widget.profile.id,
+        'providerId': widget.profile.id,
+        'ownerRole': 'provider',
+        'sourceApp': 'provider_app',
+        'senderName': widget.profile.fullName.isNotEmpty
+            ? widget.profile.fullName
+            : (widget.profile.businessName.isNotEmpty ? widget.profile.businessName : 'Provider Partner'),
+        'senderPhone': widget.profile.phoneNumber,
+        'senderEmail': 'Not provided',
+        'category': _selectedCategory,
+        'subject': subject,
+        'description': description,
+        'message': description, // backwards compatibility
+        'status': 'Open',
+        'statusHistory': [
+          {
+            'status': 'Open',
+            'changedBy': 'provider',
+            'timestamp': nowTimestamp,
+            'note': 'Ticket created by partner',
+          }
+        ],
+        'messages': [
+          {
+            'senderId': widget.profile.id,
+            'senderRole': 'provider',
+            'senderName': widget.profile.fullName,
+            'message': description,
+            'timestamp': nowTimestamp,
+          }
+        ],
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'lastMessageAt': FieldValue.serverTimestamp(),
+        'lastMessageBy': 'provider',
+      };
+
+      await compRef.set(ticketData);
+
+      if (mounted) {
+        _subjectController.clear();
+        _messageController.clear();
+        setState(() => _isSubmitting = false);
+
+        _showSuccessDialog(ticketNumber, subject);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('टिकट दर्ज करने में त्रुटि: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showSuccessDialog(String ticketId, String subject) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        contentPadding: const EdgeInsets.all(22),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.check_circle_rounded, color: Colors.green, size: 50),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'सहायता टिकट दर्ज हो गया!',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'आपकी समस्या एडमिन टीम को भेज दी गई है। हमारी पार्टनर सपोर्ट टीम जल्द संपर्क करेगी।',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('टिकट आईडी (Ticket ID)', style: TextStyle(fontSize: 10.5, color: Colors.grey)),
+                      Text(
+                        ticketId,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: AppColors.primary),
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy_rounded, size: 18, color: AppColors.primary),
+                    tooltip: 'Copy',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: ticketId));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Ticket ID कॉपी हो गया!'), duration: Duration(seconds: 2)),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _tabController.animateTo(1);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: const Text('मेरे टिकट्स देखें (View Tickets)'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        title: const Text(
+          'पार्टनर सहायता व शिकायत (Support)',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        backgroundColor: AppColors.primary,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: AppColors.accent,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+          tabs: const [
+            Tab(icon: Icon(Icons.add_comment_rounded, size: 17), text: 'नया टिकट (Raise)'),
+            Tab(icon: Icon(Icons.history_rounded, size: 17), text: 'पुरानी टिकटें (My Tickets)'),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildRaiseTicketTab(),
+          _buildMyTicketsTab(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRaiseTicketTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildCanonicalHelplineCard(),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.02),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.support_agent_rounded, color: AppColors.primary, size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'नया सहायता टिकट (Create Support Ticket)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('समस्या की श्रेणी (Category)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+                  const SizedBox(height: 6),
+                  DropdownButtonFormField<String>(
+                    value: _selectedCategory,
+                    decoration: InputDecoration(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    items: _categories.map((c) {
+                      return DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 12.5)));
+                    }).toList(),
+                    onChanged: (v) {
+                      if (v != null) setState(() => _selectedCategory = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('विषय (Subject)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+                  const SizedBox(height: 6),
+                  TextFormField(
+                    controller: _subjectController,
+                    decoration: InputDecoration(
+                      hintText: 'उदा. पेआउट बैंक खाते में नहीं आया / ग्राहक ने अनुचित व्यवहार किया',
+                      hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    validator: (val) => (val == null || val.trim().isEmpty) ? 'विषय लिखें' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('समस्या का पूरा विवरण (Message)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+                  const SizedBox(height: 6),
+                  TextFormField(
+                    controller: _messageController,
+                    maxLines: 4,
+                    decoration: InputDecoration(
+                      hintText: 'समस्या का विस्तार से विवरण यहाँ लिखें...',
+                      hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    validator: (val) => (val == null || val.trim().isEmpty) ? 'विवरण लिखें' : null,
+                  ),
+                  const SizedBox(height: 18),
+                  ElevatedButton(
+                    onPressed: _isSubmitting ? null : _submitComplaint,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: _isSubmitting
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          )
+                        : const Text('टिकट दर्ज करें (Submit Ticket)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Canonical Helpline card for Partners
+  Widget _buildCanonicalHelplineCard() {
+    return StreamBuilder<CompanySettingsEntity>(
+      stream: CompanySettingsService().getSettingsStream(),
+      initialData: CompanySettingsService().currentSettings,
+      builder: (context, snapshot) {
+        final settings = snapshot.data ?? CompanySettingsEntity.fallback();
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.support_agent_rounded, color: AppColors.primary, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${settings.companyName} पार्टनर हेल्पलाइन',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.primary),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'समय: ${settings.workingHours} | तत्काल सहायता हेतु संपर्क करें:',
+                style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => CompanySettingsService.launchCall(settings.supportPhone),
+                      icon: const Icon(Icons.call_rounded, size: 15, color: Colors.green),
+                      label: Text(
+                        settings.supportPhone,
+                        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Colors.green),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.green),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => CompanySettingsService.launchWhatsApp(settings.supportWhatsapp),
+                      icon: const Icon(Icons.chat_bubble_rounded, size: 15, color: Colors.white),
+                      label: const Text('WhatsApp', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF25D366),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMyTicketsTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('complaints')
+          .where('providerId', isEqualTo: widget.profile.id)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+        }
+
+        final docs = snapshot.data?.docs ?? [];
+        if (docs.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.confirmation_number_outlined, size: 56, color: Colors.grey.shade400),
+                const SizedBox(height: 12),
+                const Text(
+                  'कोई सहायता टिकट नहीं है',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'यदि आपको कोई समस्या या शिकायत है, तो नया टिकट दर्ज करें।',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final sortedDocs = List<QueryDocumentSnapshot>.from(docs)
+          ..sort((a, b) {
+            final aData = a.data() as Map<String, dynamic>;
+            final bData = b.data() as Map<String, dynamic>;
+            final aTs = aData['createdAt'] as Timestamp?;
+            final bTs = bData['createdAt'] as Timestamp?;
+            if (aTs == null) return 1;
+            if (bTs == null) return -1;
+            return bTs.compareTo(aTs);
+          });
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: sortedDocs.length,
+          itemBuilder: (context, index) {
+            final doc = sortedDocs[index];
+            final data = doc.data() as Map<String, dynamic>;
+            return _buildTicketCard(doc.id, data);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildTicketCard(String docId, Map<String, dynamic> data) {
+    final ticketId = data['ticketId']?.toString() ?? 'TKT-${docId.substring(0, 8)}';
+    final subject = data['subject']?.toString() ?? 'सहायता टिकट';
+    final message = data['message']?.toString() ?? data['description']?.toString() ?? '';
+    final status = data['status']?.toString() ?? 'Open';
+    final category = data['category']?.toString() ?? 'General';
+    final messages = (data['messages'] as List<dynamic>?) ?? [];
+
+    DateTime? createdAt;
+    final ts = data['createdAt'];
+    if (ts is Timestamp) {
+      createdAt = ts.toDate();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openTicketDetailModal(docId, data),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    ticketId,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.primary),
+                  ),
+                  _buildStatusBadge(status),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                subject,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5, color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+              const Divider(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    category,
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                  ),
+                  Row(
+                    children: [
+                      if (messages.isNotEmpty) ...[
+                        Icon(Icons.forum_outlined, size: 14, color: Colors.blue.shade700),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${messages.length} संदेश',
+                          style: TextStyle(fontSize: 11, color: Colors.blue.shade700, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      if (createdAt != null)
+                        Text(
+                          DateFormat('dd MMM, hh:mm a').format(createdAt),
+                          style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(String status) {
+    Color bg;
+    Color fg;
+    String displayStatus = status;
+
+    switch (status.toLowerCase()) {
+      case 'open':
+        bg = Colors.amber.shade50;
+        fg = Colors.amber.shade900;
+        displayStatus = 'Open (लंबित)';
+        break;
+      case 'in progress':
+      case 'inprogress':
+        bg = Colors.blue.shade50;
+        fg = Colors.blue.shade800;
+        displayStatus = 'In Progress (प्रगति पर)';
+        break;
+      case 'waiting for response':
+      case 'waiting':
+        bg = Colors.orange.shade50;
+        fg = Colors.orange.shade900;
+        displayStatus = 'Waiting (प्रतीक्षारत)';
+        break;
+      case 'resolved':
+        bg = Colors.green.shade50;
+        fg = Colors.green.shade800;
+        displayStatus = 'Resolved (समाधानित)';
+        break;
+      case 'closed':
+        bg = Colors.grey.shade200;
+        fg = Colors.grey.shade800;
+        displayStatus = 'Closed (बंद)';
+        break;
+      default:
+        bg = Colors.grey.shade100;
+        fg = Colors.black87;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: fg.withOpacity(0.3)),
+      ),
+      child: Text(
+        displayStatus,
+        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: fg),
+      ),
+    );
+  }
+
+  void _openTicketDetailModal(String docId, Map<String, dynamic> initialData) {
+    final replyController = TextEditingController();
+    bool isReplying = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return StreamBuilder<DocumentSnapshot>(
+              stream: FirebaseFirestore.instance.collection('complaints').doc(docId).snapshots(),
+              builder: (context, snapshot) {
+                final data = (snapshot.data?.data() as Map<String, dynamic>?) ?? initialData;
+                final ticketId = data['ticketId']?.toString() ?? 'TKT-${docId.substring(0, 8)}';
+                final subject = data['subject']?.toString() ?? 'सहायता टिकट';
+                final status = data['status']?.toString() ?? 'Open';
+                final isClosed = status.toLowerCase() == 'closed';
+                final messages = (data['messages'] as List<dynamic>?) ?? [];
+
+                return Container(
+                  height: MediaQuery.of(context).size.height * 0.85,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                          border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Text(
+                                        ticketId,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.primary),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _buildStatusBadge(status),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    subject,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () => Navigator.pop(sheetContext),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (isClosed)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          color: Colors.grey.shade200,
+                          child: const Row(
+                            children: [
+                              Icon(Icons.lock_rounded, size: 16, color: Colors.grey),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'यह टिकट बंद (Closed) कर दिया गया है। नई समस्या के लिए कृपया नया टिकट बनाएं।',
+                                  style: TextStyle(fontSize: 12, color: Colors.black87),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Expanded(
+                        child: messages.isEmpty
+                            ? const Center(child: Text('कोई संदेश नहीं है।'))
+                            : ListView.builder(
+                                padding: const EdgeInsets.all(16),
+                                itemCount: messages.length,
+                                itemBuilder: (context, i) {
+                                  final m = messages[i] as Map<String, dynamic>;
+                                  final role = m['senderRole']?.toString() ?? 'provider';
+                                  final isAdmin = role.toLowerCase() == 'admin';
+                                  final text = m['message']?.toString() ?? '';
+                                  final senderName = m['senderName']?.toString() ?? (isAdmin ? 'Admin' : 'You');
+
+                                  DateTime? msgTime;
+                                  final ts = m['timestamp'];
+                                  if (ts is Timestamp) msgTime = ts.toDate();
+
+                                  return Align(
+                                    alignment: isAdmin ? Alignment.centerLeft : Alignment.centerRight,
+                                    child: Container(
+                                      margin: const EdgeInsets.only(bottom: 12),
+                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                      constraints: BoxConstraints(
+                                        maxWidth: MediaQuery.of(context).size.width * 0.78,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: isAdmin ? const Color(0xFFF1F5F9) : AppColors.primary,
+                                        borderRadius: BorderRadius.only(
+                                          topLeft: const Radius.circular(14),
+                                          topRight: const Radius.circular(14),
+                                          bottomLeft: Radius.circular(isAdmin ? 2 : 14),
+                                          bottomRight: Radius.circular(isAdmin ? 14 : 2),
+                                        ),
+                                        border: isAdmin ? Border.all(color: const Color(0xFFCBD5E1)) : null,
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              if (isAdmin)
+                                                const Padding(
+                                                  padding: EdgeInsets.only(right: 4.0),
+                                                  child: Icon(Icons.shield_rounded, size: 12, color: AppColors.primary),
+                                                ),
+                                              Text(
+                                                isAdmin ? 'Jamui Service Partner Support' : senderName,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: isAdmin ? AppColors.primary : Colors.white70,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            text,
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              color: isAdmin ? Colors.black87 : Colors.white,
+                                              height: 1.3,
+                                            ),
+                                          ),
+                                          if (msgTime != null) ...[
+                                            const SizedBox(height: 4),
+                                            Align(
+                                              alignment: Alignment.bottomRight,
+                                              child: Text(
+                                                DateFormat('hh:mm a').format(msgTime),
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: isAdmin ? Colors.grey.shade600 : Colors.white70,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                      if (!isClosed)
+                        Container(
+                          padding: EdgeInsets.only(
+                            left: 12,
+                            right: 12,
+                            top: 8,
+                            bottom: MediaQuery.of(context).viewInsets.bottom + 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: replyController,
+                                  decoration: InputDecoration(
+                                    hintText: 'उत्तर लिखें (Reply)...',
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                icon: isReplying
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.send_rounded, color: AppColors.primary),
+                                onPressed: isReplying
+                                    ? null
+                                    : () async {
+                                        final text = replyController.text.trim();
+                                        if (text.isEmpty) return;
+
+                                        final messenger = ScaffoldMessenger.of(context);
+                                        setSheetState(() => isReplying = true);
+                                        try {
+                                          final newMsg = {
+                                            'senderId': widget.profile.id,
+                                            'senderRole': 'provider',
+                                            'senderName': widget.profile.fullName,
+                                            'message': text,
+                                            'timestamp': Timestamp.now(),
+                                          };
+
+                                          await FirebaseFirestore.instance
+                                              .collection('complaints')
+                                              .doc(docId)
+                                              .update({
+                                            'messages': FieldValue.arrayUnion([newMsg]),
+                                            'lastMessageAt': FieldValue.serverTimestamp(),
+                                            'lastMessageBy': 'provider',
+                                            'updatedAt': FieldValue.serverTimestamp(),
+                                            if (status == 'Waiting for Response')
+                                              'status': 'In Progress',
+                                          });
+
+                                          replyController.clear();
+                                        } catch (e) {
+                                          if (mounted) {
+                                            messenger.showSnackBar(
+                                              SnackBar(content: Text('उत्तर भेजने में त्रुटि: $e')),
+                                            );
+                                          }
+                                        } finally {
+                                          setSheetState(() => isReplying = false);
+                                        }
+                                      },
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+}

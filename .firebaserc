@@ -1,0 +1,21 @@
+{
+  "projects": {
+    "default": "jamui-services"
+  },
+  "targets": {
+    "jamui-services": {
+      "hosting": {
+        "provider": [
+          "jamui-provider"
+        ],
+        "main": [
+          "jamui-services"
+        ],
+        "admin": [
+          "jamui-admin"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

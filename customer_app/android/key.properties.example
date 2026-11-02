@@ -1,0 +1,9 @@
+# Google Play Production Keystore Configuration Template
+# Copy this file to `key.properties` in the same directory (customer_app/android/key.properties)
+# and fill in your actual keystore credentials.
+# IMPORTANT: Never commit `key.properties` or `*.jks` files to Git!
+
+storePassword=your_keystore_password_here
+keyPassword=your_key_password_here
+keyAlias=upload
+storeFile=../upload-keystore.jks

@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy & Terms | Jamui Services & Jamui Services Partner</title>
+  <meta name="description" content="Official Privacy Policy and Terms of Service for Jamui Services (Customer App) and Jamui Services Partner (Provider App). Google Play Store compliant legal disclosures." />
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --primary: #0C7A60;
+      --primary-dark: #085341;
+      --primary-light: #E6F4F1;
+      --accent: #F59E0B;
+      --text-main: #0F172A;
+      --text-muted: #475569;
+      --bg-light: #F8FAFC;
+      --card-bg: #FFFFFF;
+      --border-color: #E2E8F0;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; color: var(--text-main); background-color: var(--bg-light); line-height: 1.65; -webkit-font-smoothing: antialiased; }
+    h1, h2, h3, h4, .brand-font { font-family: 'Outfit', sans-serif; }
+
+    /* Navbar */
+    .navbar { position: sticky; top: 0; z-index: 100; background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border-color); padding: 1rem 1.5rem; }
+    .nav-container { max-width: 1150px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+    .brand-logo { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; color: var(--primary-dark); font-weight: 800; font-size: 1.35rem; }
+    .brand-badge { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: white; width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.25rem; box-shadow: 0 4px 10px rgba(12, 122, 96, 0.2); }
+
+    .nav-links { display: flex; gap: 1.5rem; align-items: center; }
+    .nav-links a { text-decoration: none; color: var(--text-muted); font-weight: 600; font-size: 0.95rem; transition: color 0.2s; }
+    .nav-links a:hover, .nav-links a.active { color: var(--primary); }
+    .btn-contact { background: var(--primary); color: white !important; padding: 0.55rem 1.25rem; border-radius: 9999px; transition: all 0.2s !important; }
+    .btn-contact:hover { background: var(--primary-dark); transform: translateY(-1px); }
+
+    /* Hero */
+    .hero { background: linear-gradient(135deg, #E6F4F1 0%, #FFFFFF 100%); padding: 4.5rem 1.5rem 3.5rem; text-align: center; border-bottom: 1px solid var(--border-color); }
+    .hero-container { max-width: 880px; margin: 0 auto; }
+    .tagline-chip { display: inline-block; background: rgba(12, 122, 96, 0.12); color: var(--primary-dark); font-weight: 700; font-size: 0.85rem; padding: 0.35rem 1rem; border-radius: 9999px; margin-bottom: 1.25rem; border: 1px solid rgba(12, 122, 96, 0.25); }
+    .hero h1 { font-size: 2.85rem; font-weight: 900; color: #0F172A; margin-bottom: 1rem; line-height: 1.2; }
+    .hero p { font-size: 1.15rem; color: var(--text-muted); margin-bottom: 2rem; max-width: 750px; margin-left: auto; margin-right: auto; }
+
+    .policy-tabs { display: flex; justify-content: center; gap: 0.75rem; flex-wrap: wrap; }
+    .tab-btn { padding: 0.65rem 1.35rem; border-radius: 9999px; font-weight: 700; font-size: 0.92rem; text-decoration: none; transition: all 0.2s; border: 1px solid var(--border-color); background: white; color: var(--text-main); }
+    .tab-btn.active, .tab-btn:hover { background: var(--primary); color: white; border-color: var(--primary); box-shadow: 0 4px 12px rgba(12, 122, 96, 0.25); }
+
+    /* Content */
+    .content-section { max-width: 950px; margin: 3rem auto; padding: 0 1.5rem; }
+    .policy-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 1.25rem; padding: 2.5rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.04); margin-bottom: 2.5rem; }
+    .policy-card h2 { font-size: 1.85rem; color: var(--primary-dark); margin-bottom: 1.5rem; padding-bottom: 0.75rem; border-bottom: 2px solid var(--primary-light); display: flex; align-items: center; gap: 0.75rem; }
+    .policy-card h3 { font-size: 1.28rem; color: #1E293B; margin: 2rem 0 0.85rem; font-weight: 700; }
+    .policy-card p { margin-bottom: 1.1rem; color: #334155; font-size: 1.02rem; }
+    .policy-card ul { margin: 0.75rem 0 1.25rem 1.75rem; color: #334155; }
+    .policy-card li { margin-bottom: 0.65rem; }
+
+    .highlight-box { background: var(--primary-light); border-left: 4px solid var(--primary); padding: 1.25rem; border-radius: 0 0.75rem 0.75rem 0; margin: 1.5rem 0; }
+    .highlight-box strong { color: var(--primary-dark); }
+
+    .badge-permission { display: inline-block; background: #E2E8F0; color: #0F172A; font-family: monospace; font-size: 0.85rem; padding: 0.2rem 0.6rem; border-radius: 6px; font-weight: 700; }
+
+    .contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-top: 1.25rem; }
+    .contact-box { background: #F8FAFC; border: 1px solid var(--border-color); padding: 1.25rem; border-radius: 0.85rem; }
+    .contact-box h4 { font-size: 1.05rem; color: var(--primary-dark); margin-bottom: 0.35rem; }
+    .contact-box p { margin-bottom: 0; font-size: 0.95rem; }
+
+    /* Footer */
+    footer { background: #0F172A; color: #94A3B8; padding: 3.5rem 1.5rem 2rem; border-top: 1px solid #1E293B; margin-top: 4rem; }
+    .footer-container { max-width: 1150px; margin: 0 auto; display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 2.5rem; margin-bottom: 2.5rem; }
+    .footer-brand h4 { color: white; font-size: 1.35rem; margin-bottom: 0.75rem; }
+    .footer-links h5 { color: white; font-size: 1.05rem; margin-bottom: 1rem; }
+    .footer-links ul { list-style: none; }
+    .footer-links li { margin-bottom: 0.5rem; }
+    .footer-links a { color: #94A3B8; text-decoration: none; transition: color 0.2s; font-size: 0.95rem; }
+    .footer-links a:hover { color: var(--accent); }
+    .footer-bottom { max-width: 1150px; margin: 0 auto; text-align: center; padding-top: 2rem; border-top: 1px solid #1E293B; font-size: 0.9rem; }
+
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 2.1rem; }
+      .footer-container { grid-template-columns: 1fr; }
+      .contact-grid { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+      .policy-card { padding: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation Bar -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="#" class="brand-logo">
+        <div class="brand-badge">JS</div>
+        <span>Jamui Services</span>
+      </a>
+      <div class="nav-links">
+        <a href="#privacy" class="active">Privacy Policy</a>
+        <a href="#permissions">App Permissions</a>
+        <a href="#provider-policy">Partner Policy</a>
+        <a href="#deletion">Data Deletion</a>
+        <a href="#contact" class="btn-contact">Contact Us</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Header -->
+  <header class="hero">
+    <div class="hero-container">
+      <span class="tagline-chip">Official Google Play Privacy & Legal Center</span>
+      <h1>Privacy Policy & Legal Terms</h1>
+      <p>Official privacy policy and disclosures for <strong>Jamui Services</strong> (Customer Application) and <strong>Jamui Services Partner</strong> (Service Provider Application) operating in Jamui, Bihar.</p>
+      
+      <div class="policy-tabs">
+        <a href="#privacy" class="tab-btn active">Customer App Policy</a>
+        <a href="#provider-policy" class="tab-btn">Provider / Partner Policy</a>
+        <a href="#permissions" class="tab-btn">Permissions Disclosures</a>
+        <a href="#deletion" class="tab-btn">Data Deletion Request</a>
+        <a href="#contact" class="tab-btn">Contact Details</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Legal Document -->
+  <main class="content-section">
+
+    <!-- 1. General Overview & Developer Info -->
+    <article id="privacy" class="policy-card">
+      <h2>🔒 Privacy Policy for Jamui Services</h2>
+      <p><strong>Effective Date:</strong> October 1, 2026 | <strong>Last Updated:</strong> October 1, 2026</p>
+      
+      <p>
+        Welcome to <strong>Jamui Services</strong>. This Privacy Policy applies to the mobile applications:
+      </p>
+      <ul>
+        <li><strong>Jamui Services</strong> (Customer App — Package: <code>com.jamuiservice.customer</code>)</li>
+        <li><strong>Jamui Services Partner</strong> (Provider App — Package: <code>com.jamuiservice.provider</code>)</li>
+      </ul>
+      <p>
+        Operated by <strong>Jamui Services</strong> ("we", "our", or "us"). We are committed to protecting your personal privacy and ensuring a transparent, secure platform for local home and commercial services across Jamui, Bihar.
+      </p>
+
+      <div class="highlight-box">
+        <strong>Our Privacy Commitment:</strong> We do NOT sell, rent, or trade your personal data to third parties or marketing brokers. Your information is strictly used to deliver verified, high-quality on-demand local services.
+      </div>
+
+      <h3>1. Information We Collect (डेटा जो हम एकत्र करते हैं)</h3>
+      <p>Depending on whether you use the Customer App or the Provider/Partner App, we collect the following information:</p>
+      
+      <ul>
+        <li><strong>Account Information:</strong> Full Name, Mobile Phone Number (for OTP verification), optional Email Address, and Profile Picture.</li>
+        <li><strong>Precise & Coarse Geolocation:</strong> Real-time device location when the app is active, used to identify your neighborhood in Jamui, display nearby verified technicians, and route service professionals to your door.</li>
+        <li><strong>Audio / Voice Data (Customer App):</strong> Real-time microphone access when using the built-in AI Voice Search feature (to find services by speaking in Hindi, English, or local dialect). Audio is processed solely during the active search session and is NOT recorded or stored permanently.</li>
+        <li><strong>Photos & Camera (Provider & Customer):</strong> For provider KYC identity verification (ID cards, trade certificates), profile avatars, and service verification photos (work proof before/after job completion).</li>
+        <li><strong>Service & Transaction Records:</strong> Service requests, job status updates, transaction history, customer reviews, and ratings.</li>
+        <li><strong>Technical & Diagnostics Data:</strong> Device model, OS version, Firebase Crashlytics crash reports, and performance logs to optimize app stability.</li>
+      </ul>
+
+      <h3>2. How We Use Your Information (डेटा का उपयोग)</h3>
+      <ul>
+        <li>To connect customers with nearby verified service providers (Electricians, Plumbers, Carpenters, AC Technicians, etc.).</li>
+        <li>To provide real-time updates and transactional alerts via Firebase Push Notifications.</li>
+        <li>To process secure digital payments via Razorpay (UPI, Debit Cards, Net Banking).</li>
+        <li>To detect fraud, prevent unauthorized activities, and ensure user safety.</li>
+        <li>To comply with legal obligations and resolve customer support inquiries.</li>
+      </ul>
+
+      <h3>3. Third-Party Services & SDKs</h3>
+      <p>We work with trusted, industry-standard third-party SDKs that process data under strict confidentiality agreements:</p>
+      <ul>
+        <li><strong>Google Firebase (Google LLC):</strong> Authentication (Phone OTP), Cloud Firestore (Encrypted Database), Cloud Storage, Crashlytics, and Cloud Messaging (FCM).</li>
+        <li><strong>Google Maps & OpenStreetMap:</strong> Map rendering, address geocoding, and distance calculation.</li>
+        <li><strong>Razorpay Payment Gateway:</strong> PCI-DSS compliant secure payment processing. We do NOT store your bank account passwords, CVV, or card PINs.</li>
+        <li><strong>Truecaller SDK:</strong> Instant 1-tap mobile number verification for swift login.</li>
+      </ul>
+    </article>
+
+    <!-- 2. Provider / Partner App Specific Policy -->
+    <article id="provider-policy" class="policy-card">
+      <h2>👷 Jamui Services Partner (Provider App) Disclosures</h2>
+      <p>
+        For service professionals registered on <strong>Jamui Services Partner</strong> (<code>com.jamuiservice.provider</code>):
+      </p>
+
+      <h3>1. Partner KYC & Background Verification</h3>
+      <p>
+        To ensure customer trust and community safety, partners submit identity verification documents (Government ID/Aadhaar/PAN, trade certifications, business name). This data is encrypted in Firebase Storage and accessed only by authorized Jamui Services administrators for KYC approval.
+      </p>
+
+      <h3>2. Live Location Sharing for Lead Dispatch</h3>
+      <p>
+        While on active duty, the partner app accesses location data to receive nearby booking requests in Jamui and calculate accurate distance to customer service destinations. Location collection stops when the partner goes offline.
+      </p>
+
+      <h3>3. Partner Earnings & Payouts</h3>
+      <p>
+        Payment transaction logs and subscription plans are recorded securely for transparent wallet balances and direct bank/UPI payouts.
+      </p>
+    </article>
+
+    <!-- 3. Permissions Breakdown (Play Store Mandatory) -->
+    <article id="permissions" class="policy-card">
+      <h2>📱 Comprehensive App Permissions Disclosures</h2>
+      <p>The following permissions are requested strictly for app features:</p>
+
+      <ul>
+        <li>
+          <span class="badge-permission">ACCESS_FINE_LOCATION & ACCESS_COARSE_LOCATION</span>
+          <br />
+          <strong>Reason:</strong> Used while using the app to accurately detect customer location and match with nearest available local service providers in Jamui. Never tracked in the background without user knowledge.
+        </li>
+        <li style="margin-top: 1rem;">
+          <span class="badge-permission">RECORD_AUDIO</span>
+          <br />
+          <strong>Reason:</strong> Used exclusively for speech-to-text Voice Search inside the Customer App. Audio streams are converted to search text in real-time and never archived.
+        </li>
+        <li style="margin-top: 1rem;">
+          <span class="badge-permission">POST_NOTIFICATIONS</span>
+          <br />
+          <strong>Reason:</strong> Essential for timely booking alerts, technician arrival notices, OTPs, and urgent service status updates.
+        </li>
+        <li style="margin-top: 1rem;">
+          <span class="badge-permission">CAMERA & READ_EXTERNAL_STORAGE / PHOTO PICKER</span>
+          <br />
+          <strong>Reason:</strong> Used for KYC document upload by partners and attaching work-proof / service inspection images.
+        </li>
+      </ul>
+    </article>
+
+    <!-- 4. Data Deletion & User Rights -->
+    <article id="deletion" class="policy-card">
+      <h2>🗑️ Account & Data Deletion Policy (Google Play Compliant)</h2>
+      <p>
+        We respect your fundamental right to control and erase your personal data at any time.
+      </p>
+
+      <div class="highlight-box">
+        <strong>Method 1 (Instant In-App Deletion):</strong>
+        <br />
+        Open <strong>Jamui Services</strong> or <strong>Jamui Services Partner</strong> ➔ Go to <strong>Profile / Settings</strong> ➔ Click <strong>"Delete My Account"</strong> ➔ Confirm. Your profile, active bookings, and personal records will be deleted immediately.
+        <br /><br />
+        <strong>Method 2 (Email / Web Request):</strong>
+        <br />
+        Send an email to <strong>sagarkumar82704@gmail.com</strong> with the subject line <em>"Account & Data Deletion Request"</em> along with your registered mobile phone number.
+        <br /><br />
+        <strong>Processing Timeline:</strong> Our administrative team will verify and permanently purge all associated database records, authentication credentials, and uploaded media within <strong>48 to 72 hours</strong>.
+      </div>
+
+      <h3>Data Retention Period</h3>
+      <p>
+        We retain user data only as long as your account remains active or as required by applicable Indian tax and consumer protection laws (e.g., invoices for completed paid transactions). Non-essential logs are automatically purged periodically.
+      </p>
+    </article>
+
+    <!-- 5. Children's Privacy & Security -->
+    <article class="policy-card">
+      <h2>👶 Children's Privacy & Data Security</h2>
+      <p>
+        Our services are not intended for individuals under 18 years of age. We do not knowingly solicit or collect personal information from children under 13.
+      </p>
+      <p>
+        <strong>Security Measures:</strong> All data transmissions are encrypted using standard TLS 1.3 / HTTPS. Firestore database access is governed by strict, token-validated security rules ensuring users can only read and write their own authorized data.
+      </p>
+    </article>
+
+    <!-- 6. Official Contact Information -->
+    <article id="contact" class="policy-card">
+      <h2>📞 Contact Information (संपर्क सूत्र)</h2>
+      <p>For any privacy inquiries, data deletion requests, grievance redressal, or service queries, please contact our dedicated Data Privacy Officer:</p>
+      
+      <div class="contact-grid">
+        <div class="contact-box">
+          <h4>👤 Contact Person</h4>
+          <p><strong>Sagar Kumar</strong></p>
+          <p>Founder & Lead Developer, Jamui Services</p>
+        </div>
+        <div class="contact-box">
+          <h4>📱 Mobile Helpline / WhatsApp</h4>
+          <p><strong><a href="tel:+918521301451" style="color: var(--primary); text-decoration: none; font-weight: 700;">+91 8521301451</a></strong></p>
+          <p>Available Mon - Sat (9:00 AM - 8:00 PM IST)</p>
+        </div>
+        <div class="contact-box">
+          <h4>✉️ Official Email</h4>
+          <p><strong><a href="mailto:sagarkumar82704@gmail.com" style="color: var(--primary); text-decoration: none; font-weight: 700;">sagarkumar82704@gmail.com</a></strong></p>
+          <p>Priority support & privacy grievance response</p>
+        </div>
+        <div class="contact-box">
+          <h4>📍 Office Address</h4>
+          <p><strong>Jamui Services Headquarters</strong></p>
+          <p>Main Market Road, Jamui, Bihar - 811307, India</p>
+        </div>
+      </div>
+    </article>
+
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>Jamui Services</h4>
+        <p>जमुई का अग्रणी डिजिटल होम सर्विस नेटवर्क। विश्वसनीय इलेक्ट्रीशियन, प्लंबर, कारपेंटर और अन्य लोकल सेवाएं आपके द्वार पर।</p>
+      </div>
+      <div class="footer-links">
+        <h5>Policy Links</h5>
+        <ul>
+          <li><a href="#privacy">Customer App Privacy</a></li>
+          <li><a href="#provider-policy">Partner Privacy Policy</a></li>
+          <li><a href="#permissions">Permissions Disclosures</a></li>
+          <li><a href="#deletion">Data Deletion Request</a></li>
+        </ul>
+      </div>
+      <div class="footer-links">
+        <h5>Contact & Support</h5>
+        <ul>
+          <li><a href="tel:+918521301451">+91 8521301451</a></li>
+          <li><a href="mailto:sagarkumar82704@gmail.com">sagarkumar82704@gmail.com</a></li>
+          <li>Jamui, Bihar - 811307</li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2026 Jamui Services (Customer & Partner Apps). All rights reserved. Made for Jamui, Bihar.</p>
+    </div>
+  </footer>
+
+</body>
+</html>

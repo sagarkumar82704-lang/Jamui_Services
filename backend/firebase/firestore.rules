@@ -1,0 +1,652 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/admin_users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.get('isActive', true) == true &&
+        get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.get('status', 'active') == 'active' &&
+        get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.get('role', '') in ['admin', 'super_admin', 'superAdmin'];
+    }
+
+    function isProviderAdminApproved(data) {
+      return data.get('status', '') == 'approved' ||
+             data.get('kycStatus', '') == 'approved' ||
+             data.get('isVerified', false) == true;
+    }
+
+    function isProviderBlockedOrSuspended(data) {
+      return data.get('status', '') == 'blocked' ||
+             data.get('status', '') == 'suspended';
+    }
+
+    // App Config & Version Control (Public Read for Client Configs, Secret Configs Blocked)
+    match /app_config/{configId} {
+      allow read: if configId != 'server_secrets' && configId != 'payment_secrets' && !configId.matches('private_.*');
+      allow write: if isAdmin();
+    }
+
+    match /app_settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Categories Collection (Public Read, Strictly Admin Write)
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Services Collection (Public Read, Strictly Admin Write)
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Users Collection (Customers)
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    // Customers Collection (Alias/Sub-collection)
+    match /customers/{customerId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(customerId) || isAdmin();
+    }
+
+    // Providers Collection:
+    // 1. Admins can read all.
+    // 2. Owner can read their own profile (regardless of subscription status).
+    // 3. Public / Customer access: ONLY approved providers who have a verified paid subscription (paymentVerified == true && isSubscriptionActive == true) and are not blocked/suspended.
+    match /providers/{providerId} {
+      // Public directory read allowed so customer app can query and paginate providers
+      // Note: Visibility of live/active providers is enforced by app data layer (isApprovedAndLive)
+      allow read: if true;
+      // Providers can register themselves but CANNOT self-approve or self-activate subscriptions
+      allow create: if isAdmin() || (
+        isOwner(providerId) &&
+        request.resource.data.get('isVerified', false) == false &&
+        request.resource.data.get('isSubscriptionActive', false) == false &&
+        request.resource.data.get('paymentVerified', false) == false &&
+        request.resource.data.get('subscriptionPlan', 'none') in ['none', 'free', ''] &&
+        request.resource.data.get('rating', 5.0) == 5.0 &&
+        request.resource.data.get('ratingCount', 0) == 0 &&
+        request.resource.data.get('status', 'draft') in ['draft', 'pendingReview'] &&
+        request.resource.data.get('kycStatus', 'pendingReview') in ['draft', 'notSubmitted', 'pendingReview'] &&
+        request.resource.data.get('verificationStatus', 'pending') in ['draft', 'pending', 'pendingReview'] &&
+        !request.resource.data.keys().hasAny([
+          'planLimits',
+          'isPremiumEligible',
+          'subscriptionPlanTier',
+          'planTier',
+          'storageUsage',
+          'adminCategoryOverrideLimit',
+          'subscriptionExpiry',
+          'paymentVerifiedAt',
+          'subscriptionStatus',
+          'subscriptionHistory',
+          'subscriptionActivatedAt',
+          'lastPaymentId',
+          'paymentId',
+          'orderId',
+          'razorpayPaymentId',
+          'razorpayOrderId',
+          'razorpaySignature'
+        ])
+      );
+      // Admins can update any field.
+      // Owners can update allowed profile fields, but:
+      // 1. Blocked or Suspended providers cannot update.
+      // 2. Sensitive admin fields (approval, verification, limits, ratings, subscriptions) CANNOT be altered or escalated.
+      // 3. Category Lock: If provider is already Admin-approved, Category fields are strictly locked against modification.
+      // Other authenticated users can only update public interaction counters (totalCalls, totalWhatsAppClicks, totalViews) and review ratings.
+      allow update: if isAdmin() 
+        || (isOwner(providerId) 
+            && !isProviderBlockedOrSuspended(resource.data)
+            // Strict Anti-Privilege Escalation: Provider CAN NEVER self-approve or self-verify
+            && (isProviderAdminApproved(resource.data) || (
+              request.resource.data.get('isVerified', false) == false
+              && request.resource.data.get('status', '') != 'approved'
+              && request.resource.data.get('kycStatus', '') != 'approved'
+              && request.resource.data.get('verificationStatus', '') != 'approved'
+            ))
+            // Category Approval Anti-Escalation: Provider CAN NEVER self-approve category changes
+            && (request.resource.data.get('categoryApprovalStatus', '') != 'approved' || resource.data.get('categoryApprovalStatus', '') == 'approved')
+            && (request.resource.data.get('categoryRequestStatus', '') != 'approved' || resource.data.get('categoryRequestStatus', '') == 'approved')
+            // Subscription & Payment: Provider CAN NEVER self-activate or self-verify
+            && request.resource.data.get('isSubscriptionActive', false) == resource.data.get('isSubscriptionActive', false)
+            && request.resource.data.get('paymentVerified', false) == resource.data.get('paymentVerified', false)
+            && request.resource.data.get('subscriptionExpiry', null) == resource.data.get('subscriptionExpiry', null)
+            // Ratings & Admin Limits: Provider CAN NEVER manipulate ratings or admin limits
+            && request.resource.data.get('rating', 5.0) == resource.data.get('rating', 5.0)
+            && request.resource.data.get('ratingCount', 0) == resource.data.get('ratingCount', 0)
+            && request.resource.data.get('adminCategoryOverrideLimit', 0) == resource.data.get('adminCategoryOverrideLimit', 0)
+            // Strictly forbidden server-only, subscription & quota keys can NEVER be added, modified or deleted by provider
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+              'planLimits',
+              'isPremiumEligible',
+              'subscriptionPlanTier',
+              'planTier',
+              'storageUsage',
+              'isSubscriptionActive',
+              'paymentVerified',
+              'subscriptionExpiry',
+              'paymentVerifiedAt',
+              'adminCategoryOverrideLimit',
+              'subscriptionPlan',
+              'subscriptionStatus',
+              'subscriptionHistory',
+              'subscriptionActivatedAt',
+              'lastPaymentId',
+              'paymentId',
+              'orderId',
+              'razorpayPaymentId',
+              'razorpayOrderId',
+              'razorpaySignature',
+              'rating',
+              'ratingCount'
+            ])
+            // If already approved, Categories, Status and Core flags are strictly locked against modification
+            && (!isProviderAdminApproved(resource.data) || !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+              'status',
+              'kycStatus',
+              'verificationStatus',
+              'primaryCategoryId',
+              'categoryId',
+              'category',
+              'primaryCategoryTitle',
+              'categoryTitle',
+              'selectedCategoryIds',
+              'isVerified',
+              'isSubscriptionActive',
+              'subscriptionPlan',
+              'paymentVerified',
+              'rating',
+              'ratingCount'
+            ]))
+            // If unapproved, status can only be draft or pendingReview
+            && (isProviderAdminApproved(resource.data) || (
+              request.resource.data.get('status', 'pendingReview') in ['draft', 'pendingReview'] &&
+              request.resource.data.get('kycStatus', 'pendingReview') in ['draft', 'notSubmitted', 'pendingReview'] &&
+              request.resource.data.get('verificationStatus', 'pending') in ['draft', 'pending', 'pendingReview']
+            ))
+        )
+        || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalCalls', 'totalWhatsAppClicks', 'totalViews', 'rating', 'ratingCount', 'updatedAt']));
+      allow delete: if isAdmin();
+    }
+
+    // Custom Service Applications Collection (Other Service Submissions & Admin Review)
+    match /custom_service_applications/{appId} {
+      // Authenticated provider can read their own application; Admin can read all
+      allow read: if isAuthenticated() && (
+        isOwner(appId) ||
+        resource.data.providerId == request.auth.uid ||
+        isAdmin()
+      );
+      // Provider can submit application with initial status 'pending_review' only
+      allow create: if isAuthenticated() && (
+        (isOwner(appId) || request.resource.data.providerId == request.auth.uid) &&
+        request.resource.data.get('status', '') == 'pending_review'
+      ) || isAdmin();
+      // Admin can update all fields (status, mappedCategoryId, adminFeedback, reviewedAt).
+      // Provider can update details when 'more_info_required' or 'pending_review', but CANNOT change status or review fields.
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        (isOwner(appId) || resource.data.providerId == request.auth.uid) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'status',
+          'mappedCategoryId',
+          'mappedCategoryTitle',
+          'adminFeedback',
+          'reviewedAt',
+          'reviewedBy'
+        ])
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Category Requests Collection (Provider Category Requests & Admin Review)
+    match /category_requests/{requestId} {
+      allow read: if isAuthenticated() && (
+        resource.data.providerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && (
+        (request.resource.data.providerId == request.auth.uid &&
+         request.resource.data.get('status', 'pending_review') == 'pending_review') ||
+        isAdmin()
+      );
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        resource.data.providerId == request.auth.uid &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'status',
+          'categoryRequestStatus',
+          'approvedCategoryId',
+          'approvedCategoryTitle',
+          'rejectionReason',
+          'reviewedAt',
+          'reviewedBy'
+        ])
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Admin Users Collection (Strict Admin Only - no self-creation bypass)
+    match /admin_users/{adminId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Leads & Inquiries
+    match /leads/{leadId} {
+      allow read: if isAuthenticated() && (
+        resource.data.providerId == request.auth.uid ||
+        resource.data.customerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && (
+        request.resource.data.customerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow update: if isAuthenticated() && (
+        resource.data.providerId == request.auth.uid ||
+        resource.data.customerId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+
+    // Bookings Collection (Protected from IDOR/BOLA)
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        resource.data.providerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && (
+        request.resource.data.customerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow update: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        resource.data.providerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+
+    // Reviews Collection (Verified Customer Ownership, 1-5 Star Validation, Edit Support)
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() 
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.rating >= 1 
+        && request.resource.data.rating <= 5;
+      allow update: if isAuthenticated() 
+        && resource.data.customerId == request.auth.uid 
+        && request.resource.data.customerId == request.auth.uid 
+        && request.resource.data.rating >= 1 
+        && request.resource.data.rating <= 5;
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+    }
+
+    // Favourites Collection (Strict Customer Ownership & Privacy)
+    match /favourites/{favouriteId} {
+      allow read: if isAuthenticated() && resource.data.customerId == request.auth.uid;
+      allow create: if isAuthenticated() 
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.providerId is string;
+      allow delete: if isAuthenticated() && resource.data.customerId == request.auth.uid;
+    }
+
+
+    // Notifications Collection
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || 
+        resource.data.userId == 'all' || 
+        resource.data.userId == 'all_customers' || 
+        resource.data.userId == 'all_providers' || 
+        isAdmin()
+      );
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    // Broadcast Notifications Collection (Strict Admin Write)
+    match /broadcast_notifications/{broadcastId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Sponsor Banners Collection (Strict Admin Write)
+    match /sponsor_banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Analytics Events Collection (Public/Customer Track, Authenticated Read)
+    match /analytics_events/{eventId} {
+      allow create: if true;
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Provider Stats Collection (ML aggregation — acceptance rate, completion rate)
+    match /provider_stats/{providerId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (
+        isOwner(providerId) || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ML Metrics Collection (Immutable logs)
+    match /ml_metrics/{metricId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // Support & Complaints Collection (Customers & Providers own their tickets; Admin manages all)
+    match /complaints/{complaintId} {
+      allow create: if isAuthenticated() && (
+        request.resource.data.ownerUid == request.auth.uid ||
+        request.resource.data.customerId == request.auth.uid ||
+        request.resource.data.providerId == request.auth.uid
+      );
+      allow read: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.ownerUid == request.auth.uid ||
+          resource.data.customerId == request.auth.uid ||
+          resource.data.providerId == request.auth.uid
+        )
+      );
+      allow update: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.ownerUid == request.auth.uid ||
+          resource.data.customerId == request.auth.uid ||
+          resource.data.providerId == request.auth.uid
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+
+    // Subscription Plans Collection (Public Read, Admin Only Write)
+    match /subscription_plans/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Payments Collection (Admin Read All; Provider/Shop Owner Reads Own; Writes Strictly Admin / Cloud Backend Only)
+    match /payments/{paymentId} {
+      allow read: if isAdmin() || (isAuthenticated() && (
+        resource.data.providerId == request.auth.uid ||
+        resource.data.get('shopId', '') == request.auth.uid ||
+        resource.data.get('ownerUid', '') == request.auth.uid
+      ));
+      allow write: if isAdmin();
+    }
+
+    // Pro Payments Collection (Admin Read All; Shop Owner Reads Own; Writes Strictly Admin / Cloud Backend Only)
+    match /diamond_payments/{paymentId} {
+      allow read: if isAdmin() || (isAuthenticated() && (
+        resource.data.get('ownerUid', '') == request.auth.uid ||
+        resource.data.get('shopId', '') == request.auth.uid
+      ));
+      allow write: if isAdmin();
+    }
+
+    // Subscriptions Collection (Admin Read All; Provider/Shop Owner Reads Own; Writes Strictly Admin / Cloud Backend Only)
+    match /subscriptions/{subscriptionId} {
+      allow read: if isAdmin() || (isAuthenticated() && (
+        resource.data.providerId == request.auth.uid ||
+        resource.data.get('shopId', '') == request.auth.uid ||
+        resource.data.get('ownerUid', '') == request.auth.uid
+      ));
+      allow write: if isAdmin();
+    }
+
+    // Premium Categories Collection (Public Read, Admin Write Only)
+    match /premium_categories/{catId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Provider Listings Collection (Jobs, Products, Services)
+    // 1. Approved & active listings are publicly visible.
+    // 2. Providers can read, create, update, delete their own listings.
+    // 3. Provider cannot self-approve listings (status must be 'pending_review' or 'paused').
+    // 4. Admin can read and moderate (approve, reject, pause) any listing.
+    match /provider_listings/{listingId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && (
+        isAdmin() || (
+          request.resource.data.providerId == request.auth.uid &&
+          request.resource.data.status in ['pending_review', 'paused', 'draft']
+        )
+      );
+      allow update: if isAuthenticated() && (
+        isAdmin() || (
+          resource.data.providerId == request.auth.uid &&
+          request.resource.data.providerId == request.auth.uid &&
+          (
+            request.resource.data.status in ['pending_review', 'paused', 'draft'] ||
+            request.resource.data.status == resource.data.status
+          )
+        )
+      );
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.providerId == request.auth.uid);
+    }
+
+    // Diamond Categories Collection (Public Read, Admin Write Only)
+    match /diamond_categories/{catId} {
+      allow read: if isAdmin() || resource.data.get('isActive', false) == true;
+      allow write: if isAdmin();
+    }
+
+    // Diamond Subscription Plans (Public Read, Admin Write Only)
+    match /diamond_subscription_plans/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Diamond Shop Eligibility Helper
+    function isDiamondShopEligibleAndLive(shopData) {
+      return shopData.get('isApproved', false) == true &&
+             shopData.get('status', '') == 'approved' &&
+             shopData.get('isActive', false) == true &&
+             shopData.get('isSubscriptionActive', false) == true &&
+             shopData.get('isDeleted', false) == false;
+    }
+
+    // Product Store Category Validation Helper
+    // 1. Legacy products or unassigned products (storeCategoryId == null or '') are allowed.
+    // 2. When storeCategoryId is provided, it MUST exist in this shop's own store_categories subcollection.
+    // 3. For new category assignments (create, or category changed on update), category must be active.
+    // 4. Other shop category IDs will not exist under this shopId path, so cross-shop references are rejected.
+    function isValidProductStoreCategory(shopId, reqData, existingData) {
+      return reqData.get('storeCategoryId', '') == '' || (
+        exists(/databases/$(database)/documents/diamond_shops/$(shopId)/store_categories/$(reqData.get('storeCategoryId', ''))) &&
+        (
+          (existingData != null && reqData.get('storeCategoryId', '') == existingData.get('storeCategoryId', '')) ||
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)/store_categories/$(reqData.get('storeCategoryId', ''))).data.get('isActive', false) == true
+        )
+      );
+    }
+
+    // Diamond Shops Collection:
+    // 1. Admin has full management access.
+    // 2. Shopkeeper (owner) can read their own profile anytime.
+    // 3. Public / Customers can ONLY read eligible & live shops (approved, active, active subscription, not suspended/blocked/deleted).
+    // 4. Shopkeeper registration (create): Must be owner, cannot self-approve, cannot self-activate subscription, zero ratings/revenue/orders.
+    // 5. Shopkeeper update:
+    //    - Suspended or blocked shops cannot update settings.
+    //    - Owner can update allowed business settings (name, address, delivery charge, hours, isOpen, etc.).
+    //    - Anti-Privilege Escalation: CANNOT alter approval, status, subscription, revenue, orders, ratings, or owner identity.
+    match /diamond_shops/{shopId} {
+      allow read: if isAdmin() ||
+                     (isAuthenticated() && (request.auth.uid == shopId || resource.data.get('ownerUid', '') == request.auth.uid)) ||
+                     isDiamondShopEligibleAndLive(resource.data);
+      allow create: if isAdmin() || (
+        isAuthenticated() && request.auth.uid == shopId &&
+        request.resource.data.get('ownerUid', request.auth.uid) == request.auth.uid &&
+        request.resource.data.get('isApproved', false) == false &&
+        request.resource.data.get('status', 'pending') in ['draft', 'pending', 'pending_review'] &&
+        request.resource.data.get('isSubscriptionActive', false) == false &&
+        request.resource.data.get('paymentVerified', false) == false &&
+        request.resource.data.get('rating', 0.0) == 0.0 &&
+        request.resource.data.get('ratingCount', 0) == 0 &&
+        request.resource.data.get('totalOrders', 0) == 0 &&
+        request.resource.data.get('totalRevenue', 0) == 0 &&
+        !request.resource.data.keys().hasAny([
+          'approvedAt',
+          'approvedBy',
+          'subscriptionActivatedAt',
+          'subscriptionExpiry',
+          'paymentId',
+          'orderId',
+          'razorpayPaymentId',
+          'razorpayOrderId',
+          'razorpaySignature'
+        ])
+      );
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        (request.auth.uid == shopId || resource.data.get('ownerUid', '') == request.auth.uid) &&
+        resource.data.get('status', '') != 'suspended' &&
+        resource.data.get('status', '') != 'blocked' &&
+        // Strict Anti-Privilege Escalation: identity, approval, status, subscription, and financial metrics are IMMUTABLE by client
+        request.resource.data.get('ownerUid', request.auth.uid) == resource.data.get('ownerUid', request.auth.uid) &&
+        request.resource.data.get('isApproved', false) == resource.data.get('isApproved', false) &&
+        request.resource.data.get('status', 'pending') == resource.data.get('status', 'pending') &&
+        request.resource.data.get('isSubscriptionActive', false) == resource.data.get('isSubscriptionActive', false) &&
+        request.resource.data.get('paymentVerified', false) == resource.data.get('paymentVerified', false) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'id',
+          'shopId',
+          'ownerUid',
+          'isApproved',
+          'approvedAt',
+          'approvedBy',
+          'status',
+          'isSubscriptionActive',
+          'subscriptionExpiry',
+          'subscriptionActivatedAt',
+          'paymentVerified',
+          'paymentId',
+          'orderId',
+          'razorpayPaymentId',
+          'razorpayOrderId',
+          'razorpaySignature',
+          'rating',
+          'ratingCount',
+          'totalOrders',
+          'totalRevenue',
+          'subscriptionPlan',
+          'subscriptionPlanId'
+        ])
+      );
+      allow delete: if isAdmin();
+
+      // Store Categories Subcollection (Two-Level Categories)
+      // 1. Admin has authorized full management.
+      // 2. Shopkeeper (owner) can read, create, update, and deactivate their own categories.
+      // 3. Other vendors cannot read, edit, or delete another shop's store categories.
+      // 4. Public Customers can ONLY read active store categories of approved & live shops.
+      // 5. Suspended or Blocked shops have zero write permissions.
+      // 6. Cross-shop data poisoning prevented: shopId in resource must match parent shopId.
+      match /store_categories/{categoryId} {
+        allow read: if isAdmin() ||
+                       (isAuthenticated() && (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid)) ||
+                       (resource.data.get('isActive', false) == true &&
+                        isDiamondShopEligibleAndLive(get(/databases/$(database)/documents/diamond_shops/$(shopId)).data));
+        allow create, update: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked' &&
+          request.resource.data.get('shopId', shopId) == shopId
+        );
+        allow delete: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked'
+        );
+      }
+
+      // Products Subcollection:
+      // Public can ONLY read if product is available, not deleted, AND the parent shop is approved and active!
+      // Vendor B CANNOT edit or delete Vendor A's products.
+      match /products/{productId} {
+        allow read: if isAdmin() ||
+                       (isAuthenticated() && (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid)) ||
+                       (resource.data.get('isAvailable', false) == true &&
+                        resource.data.get('isDeleted', false) == false &&
+                        isDiamondShopEligibleAndLive(get(/databases/$(database)/documents/diamond_shops/$(shopId)).data));
+        allow create: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked' &&
+          request.resource.data.get('shopId', shopId) == shopId &&
+          isValidProductStoreCategory(shopId, request.resource.data, null)
+        );
+        allow update: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked' &&
+          request.resource.data.get('shopId', shopId) == shopId &&
+          isValidProductStoreCategory(shopId, request.resource.data, resource.data)
+        );
+        allow delete: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked'
+        );
+      }
+    }
+
+    // Diamond Orders Collection:
+    // Zero-Trust: Direct client creates/updates are forbidden. All order creation and status
+    // transitions MUST pass through secure Cloud Functions (placeDiamondOrder, updateDiamondOrderStatus).
+    // Read access is strictly restricted to owning customer, owning shopkeeper, or admin.
+    match /diamond_orders/{orderId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.customerId == request.auth.uid ||
+        resource.data.shopId == request.auth.uid ||
+        resource.data.get('ownerUid', '') == request.auth.uid
+      );
+      allow write: if isAdmin();
+    }
+
+    // Audit Logs
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable audit trail
+    }
+  }
+}
