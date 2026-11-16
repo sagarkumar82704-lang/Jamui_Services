@@ -98,7 +98,7 @@ class MockProfessionalRemoteDataSource2F extends ProfessionalProviderRemoteDataS
     required String shopId,
     required String productId,
     required String operation,
-    required int amount,
+    required num amount,
     String? reason,
   }) async {
     stockAdjustmentCallCount++;
@@ -144,8 +144,9 @@ class MockProfessionalRemoteDataSource2F extends ProfessionalProviderRemoteDataS
   }
 
   @override
-  Future<void> saveProduct(String shopId, Map<String, dynamic> productData, {String? productId}) async {
+  Future<String> saveProduct(String shopId, Map<String, dynamic> productData, {String? productId, double? costPrice, String? supplierName, String? purchaseNotes, num? initialStock, int? lowStockThreshold}) async {
     products.putIfAbsent(shopId, () => []);
+    final effectiveId = productId ?? 'mock_prod_${DateTime.now().millisecondsSinceEpoch}';
     if (productId != null && productId.isNotEmpty) {
       final idx = products[shopId]!.indexWhere((p) => p['id'] == productId);
       if (idx >= 0) {
@@ -153,12 +154,13 @@ class MockProfessionalRemoteDataSource2F extends ProfessionalProviderRemoteDataS
       }
     } else {
       products[shopId]!.add({
-        'id': 'prod_${DateTime.now().millisecondsSinceEpoch}',
+        'id': effectiveId,
         'shopId': shopId,
         ...productData,
       });
     }
     _prodController.add(List.from(products[shopId]!));
+    return effectiveId;
   }
 }
 

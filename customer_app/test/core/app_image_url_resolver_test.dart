@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:apna_jamui_customer/core/config/app_environment.dart';
 import 'package:apna_jamui_customer/core/models/customer_app_settings.dart';
 import 'package:apna_jamui_customer/core/utils/app_image_url_resolver.dart';
 
@@ -123,6 +124,28 @@ void main() {
       final mapEmpty = <String, dynamic>{};
       final settingsEmpty = CustomerAppSettings.fromMap(mapEmpty);
       expect(settingsEmpty.imageBaseUrl, '');
+    });
+
+    test('11. Resolves with AppEnvironmentConfig.defaultImageBaseUrl when override is null', () {
+      AppImageUrlResolver.setOverrideBaseUrl(null);
+      const testKey = 'providers/OXBV2Zink6TvWg5VefHPi53QkyV2/products/prod_1794063348925_72bbeafb.jpg';
+      final resolved = AppImageUrlResolver.resolve(testKey);
+      
+      bool isStaging = false;
+      try {
+        isStaging = AppEnvironmentConfig.isStaging;
+      } catch (_) {}
+
+      // If built with APP_ENV=staging, it authoritatively prepends staging R2 public URL
+      if (isStaging) {
+        expect(
+          resolved,
+          'https://pub-7ffc4239e37248bd84da9d451086bfe6.r2.dev/providers/OXBV2Zink6TvWg5VefHPi53QkyV2/products/prod_1794063348925_72bbeafb.jpg',
+        );
+      } else {
+        // Without APP_ENV define in generic tests, returns the relative key safely without error
+        expect(resolved, testKey);
+      }
     });
   });
 }

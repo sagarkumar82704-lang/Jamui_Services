@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../features/provider_portal/presentation/pages/provider_webview_screen.dart';
+import '../config/app_environment.dart';
 import '../constants/app_colors.dart';
 
 /// [ProviderAppLauncherService]
@@ -8,8 +9,27 @@ import '../constants/app_colors.dart';
 class ProviderAppLauncherService {
   ProviderAppLauncherService._();
 
-  /// Real verified Firebase Hosting URL for the Jamui Services Provider Web App
-  static const String providerWebUrl = 'https://jamui-provider.web.app';
+  /// Production Hosting URL
+  static const String productionProviderWebUrl = 'https://jamui-provider.web.app';
+
+  /// Staging Hosting URL (Isolated on jamui-services-staging)
+  static const String stagingProviderWebUrl = 'https://jamui-services-staging-provider.web.app';
+
+  /// Local Emulator Hosting URL (Port 64343 / Android 10.0.2.2:64343)
+  static const String emulatorProviderWebUrl = 'http://10.0.2.2:64343';
+
+  /// Environment-aware resolved Provider Web URL.
+  /// Never opens the production Provider App from a staging Customer App.
+  static String get providerWebUrl {
+    switch (AppEnvironmentConfig.current) {
+      case AppEnvironment.staging:
+        return stagingProviderWebUrl;
+      case AppEnvironment.emulator:
+        return emulatorProviderWebUrl;
+      case AppEnvironment.production:
+        return productionProviderWebUrl;
+    }
+  }
 
   /// Deep link scheme configured in the Provider App AndroidManifest (retained for testing)
   static const String providerDeepLinkUri = 'jamuiservice-provider://login';

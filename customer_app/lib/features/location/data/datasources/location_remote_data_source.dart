@@ -24,8 +24,21 @@ abstract class LocationRemoteDataSource {
 
 class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
   final http.Client _client;
+  final bool enforceNominatimRateLimit;
 
-  LocationRemoteDataSourceImpl({http.Client? client}) : _client = client ?? http.Client();
+  LocationRemoteDataSourceImpl({
+    http.Client? client,
+    this.enforceNominatimRateLimit = true,
+  }) : _client = client ?? http.Client();
+
+  static DateTime? _lastNominatimCall;
+
+  @visibleForTesting
+  static void clearCachesForTesting() {
+    _inMemoryReverseGeocodeCache.clear();
+    _searchQueryCache.clear();
+    _lastNominatimCall = null;
+  }
 
   @override
   Future<bool> isLocationServiceEnabled() async {
@@ -63,12 +76,12 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
     if (permission == LocationPermission.denied) {
       permission = await requestPermission();
       if (permission == LocationPermission.denied) {
-        throw const PermissionDeniedException('लोकेशन अनुमति (Location Permission) अस्वीकृत की गई।');
+        throw const PermissionDeniedException('Location permission denied');
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      throw const PermissionDeniedException('लोकेशन अनुमति हमेशा के लिए ब्लॉक है। कृपया सेटिंग्स से अनुमति दें।');
+      throw const PermissionDeniedException('Location permission permanently denied. Please enable location permission in Settings.');
     }
 
     Position pos;
@@ -165,7 +178,10 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
               cached.pincode == '811317') &&
           distToKhaira > 3500.0;
 
-      if (!isStaleKhaira && cached.placeName.isNotEmpty && cached.placeName != 'स्थान खोजा जा रहा है...') {
+      if (!isStaleKhaira &&
+          cached.placeName.isNotEmpty &&
+          cached.placeName != 'Detecting location...' &&
+          cached.placeName != 'स्थान खोजा जा रहा है...') {
         if (kDebugMode) {
           debugPrint('⚡ [$corrId] Memory Cache HIT: $cacheKey -> "${cached.placeName}" | "${cached.formattedAddress}"');
         }
@@ -183,7 +199,10 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
               diskCached.pincode == '811317') &&
           distToKhaira > 3500.0;
 
-      if (!isStaleKhaira && diskCached.placeName.isNotEmpty && diskCached.placeName != 'स्थान खोजा जा रहा है...') {
+      if (!isStaleKhaira &&
+          diskCached.placeName.isNotEmpty &&
+          diskCached.placeName != 'Detecting location...' &&
+          diskCached.placeName != 'स्थान खोजा जा रहा है...') {
         _inMemoryReverseGeocodeCache[cacheKey] = diskCached;
         if (kDebugMode) {
           debugPrint('⚡ [$corrId] Disk Cache HIT: $cacheKey -> "${diskCached.placeName}" | "${diskCached.formattedAddress}"');
@@ -198,6 +217,7 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
     String poi = '';
     String road = '';
     String neighbourhood = '';
+    String suburb = '';
     String hamlet = '';
     String village = '';
     String town = '';
@@ -348,6 +368,8 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
                 formattedAddress: cleanFormatted,
                 village: specificVillage.isNotEmpty ? specificVillage : placeTitle,
                 locality: gPoi.isNotEmpty ? gPoi : (specificVillage.isNotEmpty ? specificVillage : placeTitle),
+                suburb: gNeighborhood.isNotEmpty ? gNeighborhood : gSublocality1,
+                block: gSubdistrict,
                 city: resolvedCity,
                 district: resolvedDistrict,
                 state: resolvedState,
@@ -365,10 +387,18 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
       }
     }
 
-    // ── STEP 1: Nominatim (OSM) — Reverse geocode with high zoom
+    // ── STEP 1: Nominatim (OSM) — Reverse geocode with high zoom (Respecting 1 req/sec public usage policy)
     bool nominatimSucceeded = false;
     if (poi.isEmpty && village.isEmpty && town.isEmpty) {
       try {
+        if (enforceNominatimRateLimit && _lastNominatimCall != null) {
+          final elapsedMs = DateTime.now().difference(_lastNominatimCall!).inMilliseconds;
+          if (elapsedMs < 1000 && elapsedMs >= 0) {
+            await Future.delayed(Duration(milliseconds: 1000 - elapsedMs));
+          }
+        }
+        _lastNominatimCall = DateTime.now();
+
         final uri = Uri.parse(
           'https://nominatim.openstreetmap.org/reverse?format=json&lat=$latitude&lon=$longitude&zoom=18&addressdetails=1',
         );
@@ -377,7 +407,7 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
           headers: {
             'User-Agent': 'ApnaJamuiCustomerApp/1.0 (contact: support@apnajamui.in)',
             'Accept': 'application/json',
-            'Accept-Language': 'hi,en',
+            'Accept-Language': 'en',
           },
         ).timeout(const Duration(seconds: 8));
 
@@ -392,6 +422,12 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
             final hamletRaw = (address['hamlet'] as String? ??
                     address['isolated_dwelling'] as String? ??
                     address['allotments'] as String? ??
+                    '')
+                .trim();
+            final suburbRaw = (address['suburb'] as String? ??
+                    address['neighbourhood'] as String? ??
+                    address['residential'] as String? ??
+                    address['quarter'] as String? ??
                     '')
                 .trim();
             final nRaw = (address['neighbourhood'] as String? ??
@@ -429,11 +465,12 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
             final postcodeRaw = (address['postcode'] as String? ?? '').trim();
 
             if (kDebugMode) {
-              debugPrint('🌐 [$corrId] Nominatim HTTP 200 | Raw: osmName="$osmName", road="$roadRaw", nbh="$nRaw", hamlet="$hamletRaw", v="$vRaw", town="$townRaw", county="$subdistrictRaw", dist="$districtRaw", pin="$postcodeRaw"');
+              debugPrint('🌐 [$corrId] Nominatim HTTP 200 | Raw: osmName="$osmName", road="$roadRaw", nbh="$nRaw", suburb="$suburbRaw", hamlet="$hamletRaw", v="$vRaw", town="$townRaw", county="$subdistrictRaw", dist="$districtRaw", pin="$postcodeRaw"');
             }
 
             if (vRaw.isNotEmpty) village = vRaw;
             if (hamletRaw.isNotEmpty) hamlet = hamletRaw;
+            if (suburbRaw.isNotEmpty) suburb = suburbRaw;
             if (nRaw.isNotEmpty) neighbourhood = nRaw;
             if (roadRaw.isNotEmpty) road = roadRaw;
             if (townRaw.isNotEmpty) town = townRaw;
@@ -489,14 +526,17 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
 
             final pName = (props['name'] as String? ?? '').trim();
             final pStreet = (props['street'] as String? ?? '').trim();
+            final pSuburb = (props['suburb'] as String? ?? props['locality'] as String? ?? '').trim();
             final pVillage = (props['village'] as String? ?? '').trim();
             final pHamlet = (props['hamlet'] as String? ?? props['locality'] as String? ?? '').trim();
             final pTown = (props['city'] as String? ?? props['town'] as String? ?? '').trim();
-            final pDistrict = (props['district'] as String? ?? props['county'] as String? ?? '').trim();
+            final pBlock = (props['county'] as String? ?? props['subdistrict'] as String? ?? '').trim();
+            final pDistrict = (props['district'] as String? ?? props['state_district'] as String? ?? '').trim();
+            final pState = (props['state'] as String? ?? '').trim();
             final pPostcode = (props['postcode'] as String? ?? '').trim();
 
             if (kDebugMode) {
-              debugPrint('🌐 [$corrId] Photon HTTP 200 | Raw: name="$pName", street="$pStreet", v="$pVillage", hamlet="$pHamlet", town="$pTown", dist="$pDistrict", pin="$pPostcode"');
+              debugPrint('🌐 [$corrId] Photon HTTP 200 | Raw: name="$pName", street="$pStreet", v="$pVillage", hamlet="$pHamlet", town="$pTown", block="$pBlock", dist="$pDistrict", pin="$pPostcode"');
             }
 
             if (poi.isEmpty &&
@@ -506,12 +546,15 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
               poi = pName;
             }
             if (road.isEmpty && pStreet.isNotEmpty) road = pStreet;
+            if (suburb.isEmpty && pSuburb.isNotEmpty) suburb = pSuburb;
             if (village.isEmpty && pVillage.isNotEmpty) village = pVillage;
             if (hamlet.isEmpty && pHamlet.isNotEmpty) hamlet = pHamlet;
+            if (subdistrict.isEmpty && pBlock.isNotEmpty) subdistrict = pBlock;
             if (town.isEmpty && pTown.isNotEmpty && pTown.toLowerCase() != district.toLowerCase()) {
               town = pTown;
             }
             if (district.isEmpty && pDistrict.isNotEmpty) district = pDistrict;
+            if (state.isEmpty && pState.isNotEmpty) state = pState;
             if (pincode.isEmpty && pPostcode.isNotEmpty) pincode = pPostcode;
           }
         } else {
@@ -584,6 +627,7 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
     if (distToKhairaMeters > 3500.0) {
       if (village.toLowerCase().contains('khaira') || village.contains('खैरा')) village = '';
       if (hamlet.toLowerCase().contains('khaira') || hamlet.contains('खैरा')) hamlet = '';
+      if (suburb.toLowerCase().contains('khaira') || suburb.contains('खैरा')) suburb = '';
       if (neighbourhood.toLowerCase().contains('khaira') || neighbourhood.contains('खैरा')) neighbourhood = '';
       if (poi.toLowerCase().contains('khaira') || poi.contains('खैरा')) poi = '';
       if (road.toLowerCase().contains('khaira') || road.contains('खैरा')) road = '';
@@ -606,7 +650,8 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
     // 4. Street / Road
     // 5. Village
     // 6. Town / City
-    // 7. If none available, do NOT guess Khaira -> return 'स्थानीय पता उपलब्ध नहीं'
+    // 7. Subdistrict / Block
+    // 8. If none available, do NOT guess Khaira -> return 'Location detected'
     if (poi.isNotEmpty) {
       placeName = poi;
     } else if (neighbourhood.isNotEmpty) {
@@ -619,10 +664,10 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
       placeName = village;
     } else if (town.isNotEmpty) {
       placeName = town;
-    } else if (subdistrict.isNotEmpty && distToKhairaMeters <= 2000.0) {
+    } else if (subdistrict.isNotEmpty) {
       placeName = subdistrict;
     } else {
-      placeName = 'स्थानीय पता उपलब्ध नहीं';
+      placeName = 'Location detected';
     }
 
     // ── STEP 5: Build clean formatted address
@@ -635,19 +680,24 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
       if (trimmed.isNotEmpty &&
           !seen.contains(key) &&
           !key.startsWith('unnamed') &&
+          key != 'location detected' &&
           key != 'स्थानीय पता उपलब्ध नहीं') {
         seen.add(key);
         addressParts.add(trimmed);
       }
     }
 
-    if (placeName != 'स्थानीय पता उपलब्ध नहीं' &&
+    if (placeName != 'Location detected' &&
+        placeName != 'Current Location' &&
+        placeName != 'Selected Location' &&
+        placeName != 'स्थानीय पता उपलब्ध नहीं' &&
         placeName != 'वर्तमान स्थान' &&
         placeName != 'चयनित स्थान') {
       addPart(placeName);
     }
     if (poi.isNotEmpty) addPart(poi);
     if (neighbourhood.isNotEmpty) addPart(neighbourhood);
+    if (suburb.isNotEmpty) addPart(suburb);
     if (hamlet.isNotEmpty) addPart(hamlet);
     if (road.isNotEmpty) addPart(road);
     if (village.isNotEmpty) addPart(village);
@@ -666,7 +716,7 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
         : (town.isNotEmpty ? 'Nominatim/OSM' : (district.isNotEmpty ? 'BigDataCloud' : 'DirectGPS'));
 
     if (kDebugMode) {
-      debugPrint('📍 [$corrId] RESOLVED: Provider=$providerUsed | Place="$placeName" | Addr="$formattedAddress" | Lat=${latitude.toStringAsFixed(5)}, Lng=${longitude.toStringAsFixed(5)} | DistToKhaira=${(distToKhairaMeters / 1000).toStringAsFixed(2)}km');
+      debugPrint('📍 [$corrId] RESOLVED: Provider=$providerUsed | Place="$placeName" | Addr="$formattedAddress" | Village="$village" | Block="$subdistrict" | Lat=${latitude.toStringAsFixed(5)}, Lng=${longitude.toStringAsFixed(5)} | DistToKhaira=${(distToKhairaMeters / 1000).toStringAsFixed(2)}km');
     }
 
     final resolvedEntity = CustomerLocationEntity(
@@ -676,6 +726,8 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
       formattedAddress: formattedAddress,
       village: village.isNotEmpty ? village : hamlet,
       locality: poi.isNotEmpty ? poi : (neighbourhood.isNotEmpty ? neighbourhood : road),
+      suburb: suburb.isNotEmpty ? suburb : neighbourhood,
+      block: subdistrict,
       city: town.isNotEmpty ? town : subdistrict,
       district: district,
       state: state,
@@ -684,7 +736,7 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
       timestamp: DateTime.now(),
     );
 
-    if (placeName != 'स्थान खोजा जा रहा है...') {
+    if (placeName != 'Detecting location...' && placeName != 'स्थान खोजा जा रहा है...') {
       _addToCache(cacheKey, resolvedEntity);
     }
     return resolvedEntity;
@@ -697,7 +749,7 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
     double? customerLng,
   }) async {
     final cleanQuery = query.trim();
-    if (cleanQuery.length < 3) return [];
+    if (cleanQuery.length < 2) return [];
 
     final cacheQueryKey = cleanQuery.toLowerCase();
     if (_searchQueryCache.containsKey(cacheQueryKey)) {
@@ -737,12 +789,137 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
       }
     }
 
-    // 1. High-speed Fuzzy Search via Photon API (Open-Source OSM Indian POIs & Towns - ZERO COST)
-    try {
-      String photonUrl = 'https://photon.komoot.io/api/?q=${Uri.encodeComponent(cleanQuery)}&limit=10';
-      if (customerLat != null && customerLng != null) {
-        photonUrl += '&lat=$customerLat&lon=$customerLng';
+    // Use customer coordinates if valid and non-zero; otherwise bias toward Jamui, Bihar (24.9213, 86.2238)
+    // Never pass (0.0, 0.0) to Photon as that biases search results to the Atlantic Ocean.
+    final bool hasValidCustomerBias = customerLat != null &&
+        customerLng != null &&
+        (customerLat != 0.0 || customerLng != 0.0) &&
+        customerLat >= -90.0 &&
+        customerLat <= 90.0 &&
+        customerLng >= -180.0 &&
+        customerLng <= 180.0;
+    final double biasLat = hasValidCustomerBias ? customerLat : 24.9213;
+    final double biasLng = hasValidCustomerBias ? customerLng : 86.2238;
+
+    void parsePhotonFeatures(List<dynamic> features) {
+      for (final item in features) {
+        final props = (item['properties'] as Map<String, dynamic>?) ?? {};
+        final country = (props['country'] as String? ?? '').trim();
+        final countryLower = country.toLowerCase();
+        final countryCode = (props['countrycode'] as String? ?? '').toLowerCase().trim();
+
+        // Strictly skip all foreign results
+        if (countryLower.isNotEmpty && countryLower != 'india' && countryLower != 'भारत' && countryCode != 'in') {
+          continue;
+        }
+
+        final geometry = (item['geometry'] as Map<String, dynamic>?) ?? {};
+        final coords = (geometry['coordinates'] as List<dynamic>?) ?? [];
+
+        if (coords.length >= 2) {
+          // GeoJSON order: [longitude, latitude]
+          final lon = (coords[0] as num).toDouble();
+          final lat = (coords[1] as num).toDouble();
+
+          final name = (props['name'] as String? ?? '').trim();
+          final osmValue = (props['osm_value'] as String? ?? props['type'] as String? ?? '').toLowerCase().trim();
+          final street = (props['street'] as String? ?? '').trim();
+          final localityProp = (props['locality'] as String? ?? '').trim();
+          final suburbProp = (props['suburb'] as String? ?? '').trim();
+          final villageProp = (props['village'] as String? ?? props['hamlet'] as String? ?? '').trim();
+          final blockProp = (props['county'] as String? ?? props['subdistrict'] as String? ?? '').trim();
+          final districtProp = (props['district'] as String? ?? props['state_district'] as String? ?? '').trim();
+          final cityProp = (props['city'] as String? ?? props['town'] as String? ?? '').trim();
+          final state = (props['state'] as String? ?? '').trim();
+          final postcode = (props['postcode'] as String? ?? '').trim();
+
+          final resolvedVillage = villageProp.isNotEmpty
+              ? villageProp
+              : ((osmValue == 'village' || osmValue == 'hamlet') ? name : '');
+          final resolvedSuburb = suburbProp.isNotEmpty
+              ? suburbProp
+              : (localityProp.isNotEmpty
+                  ? localityProp
+                  : ((osmValue == 'suburb' || osmValue == 'neighbourhood' || osmValue == 'locality') ? name : ''));
+          final resolvedBlock = blockProp;
+          final resolvedCity = cityProp.isNotEmpty
+              ? cityProp
+              : ((osmValue == 'city' || osmValue == 'town') ? name : '');
+          final resolvedDistrict = districtProp;
+
+          final placeName = name.isNotEmpty
+              ? name
+              : street.isNotEmpty
+                  ? street
+                  : resolvedVillage.isNotEmpty
+                      ? resolvedVillage
+                      : resolvedCity.isNotEmpty
+                          ? resolvedCity
+                          : resolvedBlock.isNotEmpty
+                              ? resolvedBlock
+                              : resolvedDistrict.isNotEmpty
+                                  ? resolvedDistrict
+                                  : (postcode.isNotEmpty ? postcode : state);
+
+          if (placeName.contains('Phúc') || placeName.contains('Hà Nội')) {
+            continue;
+          }
+
+          final seenAddr = <String>{};
+          final addressParts = <String>[];
+          void addPart(String v) {
+            final t = v.trim();
+            if (t.isNotEmpty && !seenAddr.contains(t.toLowerCase())) {
+              seenAddr.add(t.toLowerCase());
+              addressParts.add(t);
+            }
+          }
+
+          addPart(placeName);
+          if (street.isNotEmpty) addPart(street);
+          if (resolvedSuburb.isNotEmpty) addPart(resolvedSuburb);
+          if (resolvedVillage.isNotEmpty) addPart(resolvedVillage);
+          if (resolvedCity.isNotEmpty) addPart(resolvedCity);
+          if (resolvedBlock.isNotEmpty) addPart(resolvedBlock);
+          if (resolvedDistrict.isNotEmpty) addPart(resolvedDistrict);
+          if (state.isNotEmpty) addPart(state);
+          if (postcode.isNotEmpty) addPart(postcode);
+
+          final formattedAddress = addressParts.isNotEmpty
+              ? addressParts.join(', ')
+              : (state.isNotEmpty ? '$state, India' : (placeName.isNotEmpty ? '$placeName, India' : 'India'));
+
+          final key = '${lat.toStringAsFixed(5)}_${lon.toStringAsFixed(5)}';
+          if (placeName.isNotEmpty && !seenKeys.contains(key)) {
+            seenKeys.add(key);
+            results.add(CustomerLocationEntity(
+              latitude: lat,
+              longitude: lon,
+              placeName: placeName,
+              formattedAddress: formattedAddress,
+              village: resolvedVillage,
+              locality: localityProp.isNotEmpty ? localityProp : street,
+              suburb: resolvedSuburb,
+              block: resolvedBlock,
+              city: resolvedCity,
+              district: resolvedDistrict,
+              state: state,
+              pincode: postcode,
+              timestamp: DateTime.now(),
+            ));
+          }
+        }
       }
+    }
+
+    // 1. High-speed Fuzzy Search via Photon API ONLY (Open-Source OSM Indian POIs, Villages, Towns & PIN codes)
+    // NOTE: Public Nominatim is strictly NEVER used for keystroke-by-keystroke search/autocomplete.
+    bool photonSucceeded = false;
+    Object? lastPhotonError;
+
+    try {
+      final String photonUrl =
+          'https://photon.komoot.io/api/?q=${Uri.encodeComponent(cleanQuery)}&limit=15&lang=en&lat=$biasLat&lon=$biasLng';
 
       final photonRes = await _client.get(
         Uri.parse(photonUrl),
@@ -750,189 +927,46 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
           'User-Agent': 'ApnaJamuiCustomerApp/1.0 (contact: support@apnajamui.in)',
           'Accept': 'application/json',
         },
-      ).timeout(const Duration(seconds: 6));
+      ).timeout(const Duration(seconds: 8));
 
       if (photonRes.statusCode == 200) {
+        photonSucceeded = true;
         final data = jsonDecode(photonRes.body) as Map<String, dynamic>;
         final features = data['features'] as List<dynamic>? ?? [];
+        parsePhotonFeatures(features);
 
-        for (final item in features) {
-          final props = (item['properties'] as Map<String, dynamic>?) ?? {};
-          final country = (props['country'] as String? ?? '').trim();
-          final countryLower = country.toLowerCase();
-          final countryCode = (props['countrycode'] as String? ?? '').toLowerCase().trim();
+        // If a local village or 6-digit PIN code returned only global foreign matches on the first pass,
+        // query Photon scoped to India so Indian villages and PIN codes are not crowded out by global results.
+        if (results.isEmpty && !cleanQuery.toLowerCase().contains('india')) {
+          final String indiaScopedUrl =
+              'https://photon.komoot.io/api/?q=${Uri.encodeComponent('$cleanQuery India')}&limit=15&lang=en&lat=$biasLat&lon=$biasLng';
+          final scopedRes = await _client.get(
+            Uri.parse(indiaScopedUrl),
+            headers: {
+              'User-Agent': 'ApnaJamuiCustomerApp/1.0 (contact: support@apnajamui.in)',
+              'Accept': 'application/json',
+            },
+          ).timeout(const Duration(seconds: 8));
 
-          // Strictly skip all foreign results
-          if (countryLower.isNotEmpty && countryLower != 'india' && countryLower != 'भारत' && countryCode != 'in') {
-            continue;
-          }
-
-          final geometry = (item['geometry'] as Map<String, dynamic>?) ?? {};
-          final coords = (geometry['coordinates'] as List<dynamic>?) ?? [];
-
-          if (coords.length >= 2) {
-            // GeoJSON order: [longitude, latitude]
-            final lon = (coords[0] as num).toDouble();
-            final lat = (coords[1] as num).toDouble();
-
-            final name = (props['name'] as String? ?? '').trim();
-            final street = (props['street'] as String? ?? '').trim();
-            final district = (props['district'] as String? ?? props['county'] as String? ?? '').trim();
-            final city = (props['city'] as String? ?? props['town'] as String? ?? props['village'] as String? ?? '').trim();
-            final state = (props['state'] as String? ?? '').trim();
-            final postcode = (props['postcode'] as String? ?? '').trim();
-
-            final placeName = name.isNotEmpty
-                ? name
-                : street.isNotEmpty
-                    ? street
-                    : city.isNotEmpty
-                        ? city
-                        : district;
-
-            if (placeName.contains('Phúc') || placeName.contains('Hà Nội')) {
-              continue;
-            }
-
-            final addressParts = <String>[
-              if (placeName.isNotEmpty && placeName != street && street.isNotEmpty) street,
-              if (city.isNotEmpty && city != placeName) city,
-              if (district.isNotEmpty && district != city && district != placeName) district,
-              if (state.isNotEmpty) state,
-              if (postcode.isNotEmpty) postcode,
-              'भारत',
-            ];
-
-            final formattedAddress = addressParts.isNotEmpty
-                ? addressParts.join(', ')
-                : (state.isNotEmpty ? '$state, भारत' : (placeName.isNotEmpty ? '$placeName, भारत' : 'भारत'));
-
-            final key = '${lat.toStringAsFixed(5)}_${lon.toStringAsFixed(5)}';
-            if (placeName.isNotEmpty && !seenKeys.contains(key)) {
-              seenKeys.add(key);
-              results.add(CustomerLocationEntity(
-                latitude: lat,
-                longitude: lon,
-                placeName: placeName,
-                formattedAddress: formattedAddress,
-                city: city,
-                district: district,
-                state: state,
-                pincode: postcode,
-                timestamp: DateTime.now(),
-              ));
-            }
+          if (scopedRes.statusCode == 200) {
+            final scopedData = jsonDecode(scopedRes.body) as Map<String, dynamic>;
+            final scopedFeatures = scopedData['features'] as List<dynamic>? ?? [];
+            parsePhotonFeatures(scopedFeatures);
           }
         }
+      } else {
+        lastPhotonError = Exception('Photon HTTP ${photonRes.statusCode}');
       }
     } catch (e) {
+      lastPhotonError = e;
       debugPrint('⚠️ [LocationRemoteDataSource] Photon search error: $e');
     }
 
-    // 2. Nominatim API Search (OpenStreetMap Fallback - ZERO COST)
-    if (results.length < 5) {
-      try {
-        final uri = Uri.parse(
-          'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(cleanQuery)}&format=jsonv2&addressdetails=1&limit=8&countrycodes=in',
-        );
-
-        final response = await _client.get(
-          uri,
-          headers: {
-            'User-Agent': 'ApnaJamuiCustomerApp/1.0 (contact: support@apnajamui.in)',
-            'Accept': 'application/json',
-            'Accept-Language': 'hi,en',
-          },
-        ).timeout(const Duration(seconds: 6));
-
-        if (response.statusCode == 200) {
-          final List<dynamic> list = jsonDecode(response.body) as List<dynamic>;
-          for (final item in list) {
-            final data = item as Map<String, dynamic>;
-            final lat = double.tryParse(data['lat']?.toString() ?? '') ?? 0.0;
-            final lon = double.tryParse(data['lon']?.toString() ?? '') ?? 0.0;
-            final address = data['address'] as Map<String, dynamic>?;
-
-            if (lat != 0.0 && lon != 0.0) {
-              final key = '${lat.toStringAsFixed(5)}_${lon.toStringAsFixed(5)}';
-              if (!seenKeys.contains(key)) {
-                seenKeys.add(key);
-
-                String placeName = (data['name'] as String? ?? '').trim();
-                String village = '';
-                String city = '';
-                String district = '';
-                String state = '';
-                String pincode = '';
-
-                if (address != null) {
-                  final road = (address['road'] as String? ?? '').trim();
-                  final neighbourhood = (address['neighbourhood'] as String? ?? '').trim();
-                  final suburb = (address['suburb'] as String? ?? '').trim();
-                  final town = (address['town'] as String? ?? '').trim();
-                  final cityVal = (address['city'] as String? ?? '').trim();
-                  final villageVal = (address['village'] as String? ?? address['hamlet'] as String? ?? '').trim();
-                  final countyVal = (address['county'] as String? ?? '').trim();
-                  final stateDist = (address['state_district'] as String? ?? '').trim();
-                  final stateVal = (address['state'] as String? ?? '').trim();
-                  final postcode = (address['postcode'] as String? ?? '').trim();
-
-                  village = villageVal;
-                  city = cityVal.isNotEmpty
-                      ? cityVal
-                      : town.isNotEmpty
-                          ? town
-                          : villageVal.isNotEmpty
-                              ? villageVal
-                              : countyVal;
-
-                  district = stateDist.isNotEmpty ? stateDist : countyVal;
-                  state = stateVal;
-                  pincode = postcode;
-
-                  if (placeName.isEmpty) {
-                    placeName = villageVal.isNotEmpty
-                        ? villageVal
-                        : neighbourhood.isNotEmpty
-                            ? neighbourhood
-                            : suburb.isNotEmpty
-                                ? suburb
-                                : road.isNotEmpty
-                                    ? road
-                                    : city;
-                  }
-                }
-
-                if (placeName.isEmpty) {
-                  placeName = (data['display_name'] as String? ?? 'चयनित स्थान').split(',').first;
-                }
-
-                results.add(CustomerLocationEntity(
-                  latitude: lat,
-                  longitude: lon,
-                  placeName: placeName,
-                  formattedAddress: data['display_name'] as String? ?? '',
-                  village: village,
-                  city: city,
-                  district: district,
-                  state: state,
-                  pincode: pincode,
-                  timestamp: DateTime.now(),
-                ));
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('⚠️ [LocationRemoteDataSource] Nominatim search error: $e');
-      }
-    }
-
-    // 3. Optional Paid Google Geocoding Search (ONLY if explicitly enabled via feature flag)
+    // 2. Optional Paid Google Geocoding Search (ONLY if explicitly enabled via feature flag)
     if (results.isEmpty && MapsConfig.hasGoogleKey) {
       try {
         final googleUrl = Uri.parse(
-          'https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(cleanQuery)}&key=${MapsConfig.googleMapsApiKey}&language=hi&region=IN&components=country:IN',
+          'https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(cleanQuery)}&key=${MapsConfig.googleMapsApiKey}&language=en&region=IN&components=country:IN',
         );
         final res = await _client.get(
           googleUrl,
@@ -955,6 +989,7 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
 
               String gCity = '';
               String gDist = '';
+              String gBlock = '';
               String gState = '';
               String gPin = '';
               String gVillage = '';
@@ -969,6 +1004,8 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
                   gVillage = name;
                 } else if (types.contains('locality')) {
                   gCity = name;
+                } else if (types.contains('administrative_area_level_3')) {
+                  gBlock = name;
                 } else if (types.contains('administrative_area_level_2')) {
                   gDist = name;
                 } else if (types.contains('administrative_area_level_1')) {
@@ -991,6 +1028,7 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
                   placeName: placeName,
                   formattedAddress: formatted,
                   village: gVillage,
+                  block: gBlock,
                   city: gCity,
                   district: gDist,
                   state: gState,
@@ -1004,6 +1042,10 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
       } catch (e) {
         debugPrint('⚠️ [LocationRemoteDataSource] Google search error: $e');
       }
+    }
+
+    if (!photonSucceeded && results.isEmpty && lastPhotonError != null) {
+      throw Exception('Unable to search locations: $lastPhotonError');
     }
 
     if (results.isNotEmpty) {

@@ -12,6 +12,13 @@ class ServiceProviderEntity extends Equatable {
   final int experienceYears;
   final String jamuiArea;
   final String fullAddress;
+  final String village;
+  final String block;
+  final String locality;
+  final String city;
+  final String district;
+  final String state;
+  final String pincode;
   final double latitude;
   final double longitude;
   final double serviceRadiusKm;
@@ -65,6 +72,13 @@ class ServiceProviderEntity extends Equatable {
     required this.experienceYears,
     this.jamuiArea = '',
     this.fullAddress = '',
+    this.village = '',
+    this.block = '',
+    this.locality = '',
+    this.city = '',
+    this.district = '',
+    this.state = '',
+    this.pincode = '',
     this.latitude = 0.0,
     this.longitude = 0.0,
     this.serviceRadiusKm = 10.0,
@@ -129,6 +143,13 @@ class ServiceProviderEntity extends Equatable {
       experienceYears: experienceYears,
       jamuiArea: jamuiArea,
       fullAddress: fullAddress,
+      village: village,
+      block: block,
+      locality: locality,
+      city: city,
+      district: district,
+      state: state,
+      pincode: pincode,
       latitude: latitude,
       longitude: longitude,
       serviceRadiusKm: serviceRadiusKm,
@@ -307,6 +328,13 @@ class ServiceProviderEntity extends Equatable {
         experienceYears,
         jamuiArea,
         fullAddress,
+        village,
+        block,
+        locality,
+        city,
+        district,
+        state,
+        pincode,
         latitude,
         longitude,
         serviceRadiusKm,

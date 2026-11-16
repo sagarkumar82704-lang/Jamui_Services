@@ -38,24 +38,6 @@ class MockProviderRepository implements ProviderRepository {
   Future<void> signOut() async {}
 
   @override
-  Future<void> sendPhoneOtp({
-    required String phoneNumber,
-    required void Function(String verificationId, int? resendToken) onCodeSent,
-    required void Function(String errorMessage) onError,
-    required void Function(PhoneAuthCredential credential) onVerificationCompleted,
-  }) async {
-    onCodeSent('mock_verification_id', 1234);
-  }
-
-  @override
-  Future<UserCredential> verifyOtpCode({
-    required String verificationId,
-    required String smsCode,
-  }) async {
-    throw UnimplementedError();
-  }
-
-  @override
   Future<ProviderProfileEntity?> getProfile(String providerId) async {
     return currentProfile;
   }
@@ -205,19 +187,6 @@ class MockProviderRepository implements ProviderRepository {
   Future<CustomServiceApplicationEntity?> getCustomServiceApplication(String providerId) async {
     return null;
   }
-
-  @override
-  Future<User> linkEmailPasswordCredential({
-    required String email,
-    required String password,
-  }) => throw UnimplementedError();
-
-  @override
-  Future<ProviderProfileEntity> safeMigratePhoneAccount({
-    required String providerId,
-    required String email,
-    required String password,
-  }) => throw UnimplementedError();
 }
 
 void main() {
@@ -331,33 +300,6 @@ void main() {
 
       expect((bloc.state as ProviderAuthenticated).profile.isAvailable, isTrue);
       expect(mockRepository.currentProfile?.isAvailable, isTrue);
-    });
-
-    test('SendProviderOtpEvent emits [ProviderAuthLoading, ProviderOtpSentState]', () async {
-      final expectedStates = [
-        ProviderAuthLoading(),
-        const ProviderOtpSentState(
-          verificationId: 'mock_verification_id',
-          phoneNumber: '+919876543210',
-        ),
-      ];
-
-      expectLater(bloc.stream, emitsInOrder(expectedStates));
-      bloc.add(const SendProviderOtpEvent('+919876543210'));
-    });
-
-    test('SendProviderOtpEvent with unregistered phone emits ProviderNotRegisteredErrorState', () async {
-      final expectedStates = [
-        ProviderAuthLoading(),
-        isA<ProviderNotRegisteredErrorState>().having(
-          (s) => s.phoneNumber,
-          'phoneNumber',
-          '+919999999999',
-        ),
-      ];
-
-      expectLater(bloc.stream, emitsInOrder(expectedStates));
-      bloc.add(const SendProviderOtpEvent('+919999999999'));
     });
 
     test('1 & 2. Approved Provider edits permitted fields via UpdatePermittedProfileFieldsEvent -> saved instantly and remains approved', () async {

@@ -1,4 +1,5 @@
 import 'dart:async';
+// ignore_for_file: prefer_initializing_formals
 import 'dart:convert';
 import 'package:apna_jamui_customer/features/auth/domain/entities/customer_entity.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -12,21 +13,29 @@ import 'customer_auth_state.dart';
 
 class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
   final CustomerAuthRepository authRepository;
+  final FirebaseAuth? _firebaseAuth;
   static const String _cachedCustomerProfileKey = 'cached_customer_profile_v2';
 
-  CustomerAuthBloc({required this.authRepository}) : super(const CustomerAuthInitialState()) {
+  CustomerAuthBloc({
+    required this.authRepository,
+    FirebaseAuth? firebaseAuth,
+  })  : _firebaseAuth = firebaseAuth,
+        super(const CustomerAuthInitialState()) {
     on<CheckCustomerAuthStatusEvent>(_onCheckStatus);
-    on<SendCustomerPhoneOtpEvent>(_onSendPhoneOtp);
-    on<CustomerOtpCodeSentEvent>(_onOtpCodeSent);
-    on<VerifyCustomerPhoneOtpEvent>(_onVerifyPhoneOtp);
-    on<CustomerAutoVerifiedEvent>(_onAutoVerified);
     on<CheckCustomerProfilesAfterAuthEvent>(_onCheckProfilesAfterAuth);
     on<SignInWithEmailEvent>(_onSignInWithEmail);
     on<RegisterWithEmailEvent>(_onRegisterWithEmail);
-    on<LinkEmailToPhoneAccountEvent>(_onLinkEmailToPhoneAccount);
     on<SendPasswordResetEvent>(_onSendPasswordReset);
     on<SaveCustomerProfileEvent>(_onSaveProfile);
     on<CustomerSignOutEvent>(_onSignOut);
+  }
+
+  User? get _currentUser {
+    try {
+      return _firebaseAuth?.currentUser ?? FirebaseAuth.instance.currentUser;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _cacheCustomerProfile(CustomerEntity customer) async {
@@ -116,7 +125,7 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
         // Prioritize verified phone number from FirebaseAuth session
         String verifiedPhone = phoneNumber ?? '';
         try {
-          final currentUser = FirebaseAuth.instance.currentUser;
+          final currentUser = _currentUser;
           if (verifiedPhone.isEmpty && currentUser?.phoneNumber != null && currentUser!.phoneNumber!.isNotEmpty) {
             verifiedPhone = currentUser.phoneNumber!;
           }
@@ -138,7 +147,7 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
       // If network failure occurred (timeout, offline, socket exception):
       // Do NOT log out authenticated user! Keep user authenticated with safe customer entity.
       if (isNetworkFailure) {
-        final currentUser = FirebaseAuth.instance.currentUser;
+        final currentUser = _currentUser;
         final phone = phoneNumber ?? currentUser?.phoneNumber ?? '';
         final fallbackCustomer = CustomerEntity(
           id: uid,
@@ -173,7 +182,7 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
       // New Customer profile setup required.
       String userPhone = phoneNumber ?? '';
       try {
-        final currentUser = FirebaseAuth.instance.currentUser;
+        final currentUser = _currentUser;
         if (userPhone.isEmpty) userPhone = currentUser?.phoneNumber ?? '';
       } catch (_) {}
 
@@ -185,7 +194,7 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
       ));
     } catch (e) {
       // If error occurs but user is authenticated in Firebase Auth, preserve authentication!
-      final currentUser = FirebaseAuth.instance.currentUser;
+      final currentUser = _currentUser;
       if (currentUser != null) {
         final fallbackCustomer = CustomerEntity(
           id: uid,
@@ -207,17 +216,18 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
     emit(const CustomerAuthLoadingState(message: 'सेशन जाँच किया जा रहा है...'));
     try {
       // 1. Check current synchronous user
-      User? currentFirebaseUser = FirebaseAuth.instance.currentUser;
+      User? currentFirebaseUser = _currentUser;
 
       // 2. If null on cold boot, give Firebase Auth opportunity to restore credentials from disk
       if (currentFirebaseUser == null) {
         try {
-          currentFirebaseUser = await FirebaseAuth.instance
+          final auth = _firebaseAuth ?? FirebaseAuth.instance;
+          currentFirebaseUser = await auth
               .authStateChanges()
               .first
               .timeout(const Duration(milliseconds: 1200));
         } catch (_) {
-          currentFirebaseUser = FirebaseAuth.instance.currentUser;
+          currentFirebaseUser = _currentUser;
         }
       }
 
@@ -233,97 +243,6 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
       );
     } catch (_) {
       emit(const CustomerUnauthenticatedState());
-    }
-  }
-
-  Future<void> _onSendPhoneOtp(
-    SendCustomerPhoneOtpEvent event,
-    Emitter<CustomerAuthState> emit,
-  ) async {
-    emit(const CustomerAuthLoadingState(message: 'OTP भेजा जा रहा है...'));
-    final completer = Completer<void>();
-
-    await authRepository.sendPhoneOtp(
-      phoneNumber: event.phoneNumber,
-      resendToken: event.resendToken,
-      onCodeSent: (verificationId, resendToken) {
-        add(CustomerOtpCodeSentEvent(
-          verificationId: verificationId,
-          resendToken: resendToken,
-          phoneNumber: event.phoneNumber,
-        ));
-        if (!completer.isCompleted) completer.complete();
-      },
-      onError: (errorMessage) {
-        emit(CustomerAuthFailureState(errorMessage));
-        if (!completer.isCompleted) completer.complete();
-      },
-      onVerificationCompleted: (credential) {
-        add(CustomerAutoVerifiedEvent(credential));
-        if (!completer.isCompleted) completer.complete();
-      },
-    );
-
-    await completer.future.timeout(
-      const Duration(seconds: 45),
-      onTimeout: () {},
-    );
-  }
-
-  void _onOtpCodeSent(
-    CustomerOtpCodeSentEvent event,
-    Emitter<CustomerAuthState> emit,
-  ) {
-    emit(CustomerOtpSentState(
-      verificationId: event.verificationId,
-      resendToken: event.resendToken,
-      phoneNumber: event.phoneNumber,
-      timeoutSeconds: 60,
-    ));
-  }
-
-  Future<void> _onVerifyPhoneOtp(
-    VerifyCustomerPhoneOtpEvent event,
-    Emitter<CustomerAuthState> emit,
-  ) async {
-    emit(const CustomerAuthLoadingState(message: 'OTP सत्यापित किया जा रहा है...'));
-    try {
-      final userCred = await authRepository.verifyOtpCode(
-        verificationId: event.verificationId,
-        smsCode: event.smsCode,
-      );
-      final user = userCred.user;
-      if (user != null) {
-        await _checkProfilesAndRoute(user.uid, user.phoneNumber, emit);
-      } else {
-        emit(const CustomerAuthFailureState('सत्यापन विफल रहा। कृपया पुनः प्रयास करें।'));
-      }
-    } catch (e) {
-      String cleanMessage = e.toString();
-      if (cleanMessage.startsWith('Exception: ')) {
-        cleanMessage = cleanMessage.substring(11);
-      }
-      emit(CustomerAuthFailureState(cleanMessage));
-    }
-  }
-
-  Future<void> _onAutoVerified(
-    CustomerAutoVerifiedEvent event,
-    Emitter<CustomerAuthState> emit,
-  ) async {
-    emit(const CustomerAuthLoadingState(message: 'ऑटो सत्यापन सफल, खाता जाँचा जा रहा है...'));
-    try {
-      final userCred = await authRepository.signInWithPhoneCredential(event.credential);
-      final user = userCred.user;
-      if (user != null) {
-        await _checkProfilesAndRoute(user.uid, user.phoneNumber, emit);
-      }
-    } catch (e) {
-      String cleanMessage = e.toString();
-      if (cleanMessage.startsWith('Exception: ')) {
-        cleanMessage = cleanMessage.substring(11);
-      }
-      emit(CustomerAuthFailureState(cleanMessage));
     }
   }
 
@@ -361,13 +280,14 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
         password: event.password,
       );
 
-      final currentFirebaseUser = FirebaseAuth.instance.currentUser;
-      final uid = currentFirebaseUser?.uid ?? '';
-      final phone = currentFirebaseUser?.phoneNumber ?? '';
+      final currentFirebaseUser = _currentUser;
+      final uid = currentFirebaseUser?.uid ?? customer?.id ?? '';
+      final phone = currentFirebaseUser?.phoneNumber ?? customer?.phoneNumber ?? '';
 
       if (uid.isNotEmpty) {
         await _checkProfilesAndRoute(uid, phone, emit);
       } else if (customer != null && customer.fullName.isNotEmpty) {
+        await _cacheCustomerProfile(customer);
         emit(CustomerAuthenticatedState(customer));
       } else {
         emit(CustomerProfileSetupRequiredState(
@@ -404,18 +324,10 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
         longitude: event.longitude,
       );
 
-      final currentFirebaseUser = FirebaseAuth.instance.currentUser;
+      final currentFirebaseUser = _currentUser;
       final uid = currentFirebaseUser?.uid ?? customer?.id ?? '';
 
       if (uid.isNotEmpty) {
-        // Safely migrate any historical leads/profile created previously with this phone number
-        try {
-          await authRepository.migrateOldCustomerData(
-            phoneNumber: event.phoneNumber,
-            newUid: uid,
-          );
-        } catch (_) {}
-
         final freshCustomer = await authRepository.getCustomerProfile(uid) ?? customer;
         if (freshCustomer != null) {
           await _cacheCustomerProfile(freshCustomer);
@@ -434,37 +346,6 @@ class CustomerAuthBloc extends Bloc<CustomerAuthEvent, CustomerAuthState> {
           phoneNumber: event.phoneNumber,
         ));
       }
-    } catch (e) {
-      String cleanMessage = e.toString();
-      if (cleanMessage.startsWith('Exception: ')) {
-        cleanMessage = cleanMessage.substring(11);
-      } else {
-        cleanMessage = AuthExceptionHandler.handleException(e);
-      }
-      emit(CustomerAuthFailureState(cleanMessage));
-    }
-  }
-
-  Future<void> _onLinkEmailToPhoneAccount(
-    LinkEmailToPhoneAccountEvent event,
-    Emitter<CustomerAuthState> emit,
-  ) async {
-    emit(const CustomerAuthLoadingState(message: 'ईमेल व पासवर्ड सुरक्षित किया जा रहा है...'));
-    try {
-      await authRepository.linkEmailToCurrentAccount(
-        email: event.email,
-        password: event.password,
-      );
-      final currentFirebaseUser = FirebaseAuth.instance.currentUser;
-      if (currentFirebaseUser != null) {
-        final profile = await authRepository.getCustomerProfile(currentFirebaseUser.uid);
-        if (profile != null) {
-          final updated = profile.copyWith(email: event.email.trim());
-          await _cacheCustomerProfile(updated);
-          emit(CustomerAuthenticatedState(updated));
-        }
-      }
-      emit(CustomerEmailLinkedSuccessState(event.email));
     } catch (e) {
       String cleanMessage = e.toString();
       if (cleanMessage.startsWith('Exception: ')) {

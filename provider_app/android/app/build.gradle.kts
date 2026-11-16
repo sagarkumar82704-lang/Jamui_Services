@@ -46,6 +46,18 @@ android {
         versionName = flutter.versionName
     }
 
+    flavorDimensions += "environment"
+    productFlavors {
+        create("staging") {
+            dimension = "environment"
+            applicationId = "com.jamuiservice.provider"
+        }
+        create("production") {
+            dimension = "environment"
+            applicationId = "com.jamuiservice.provider"
+        }
+    }
+
     buildTypes {
         release {
             signingConfig = if (keystorePropertiesFile.exists()) {

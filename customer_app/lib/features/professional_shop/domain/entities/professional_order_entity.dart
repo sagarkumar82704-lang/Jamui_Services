@@ -3,6 +3,8 @@ import 'package:equatable/equatable.dart';
 
 class ProfessionalOrderItem extends Equatable {
   final String productId;
+  final String? variantId;
+  final String? variantTitle;
   final String title;
   final String unit;
   final String thumbnailUrl;
@@ -12,6 +14,8 @@ class ProfessionalOrderItem extends Equatable {
 
   const ProfessionalOrderItem({
     required this.productId,
+    this.variantId,
+    this.variantTitle,
     required this.title,
     required this.unit,
     this.thumbnailUrl = '',
@@ -20,11 +24,55 @@ class ProfessionalOrderItem extends Equatable {
     required this.total,
   });
 
+  /// Whether this line item has a selected variant.
+  bool get hasVariant => variantTitle != null && variantTitle!.trim().isNotEmpty;
+
+  /// Returns clean title with variant if present (e.g. "Tata Tea Gold (500g)").
+  String get displayTitle {
+    if (hasVariant) {
+      return '$title (${variantTitle!.trim()})';
+    }
+    return title;
+  }
+
+  /// Returns clean display label with unit suffix when appropriate,
+  /// avoiding redundant duplication if the unit is already part of the variant title.
+  String get displayTitleWithUnit {
+    if (hasVariant) {
+      final cleanV = variantTitle!.trim();
+      final cleanU = unit.trim();
+      if (cleanU.isNotEmpty && !cleanV.toLowerCase().contains(cleanU.toLowerCase())) {
+        return '$title ($cleanV, $cleanU)';
+      }
+      return '$title ($cleanV)';
+    }
+    if (unit.trim().isNotEmpty) {
+      return '$title (${unit.trim()})';
+    }
+    return title;
+  }
+
+  /// Formats monetary amount cleanly:
+  /// 49 -> ₹49, 49.50 -> ₹49.50, 100.00 -> ₹100
+  static String formatCurrency(num value, {String prefix = '₹'}) {
+    final d = value.toDouble();
+    if (d == d.roundToDouble()) {
+      return '$prefix${d.toInt()}';
+    }
+    return '$prefix${d.toStringAsFixed(2)}';
+  }
+
   factory ProfessionalOrderItem.fromMap(Map<String, dynamic> map) {
     final pr = (map['price'] as num?)?.toDouble() ?? (map['pricePerUnit'] as num?)?.toDouble() ?? 0.0;
-    final qty = (map['quantity'] as num?)?.toInt() ?? 1;
+    final rawQty = map['quantity'];
+    final parsedQty = (rawQty is num)
+        ? rawQty.toInt()
+        : (int.tryParse(rawQty?.toString() ?? '') ?? 1);
+    final qty = parsedQty > 0 ? parsedQty : 1;
     return ProfessionalOrderItem(
       productId: (map['productId'] as String?) ?? '',
+      variantId: map['variantId'] as String?,
+      variantTitle: map['variantTitle'] as String?,
       title: (map['title'] as String?) ?? (map['titleEnglish'] as String?) ?? (map['name'] as String?) ?? '',
       unit: (map['unit'] as String?) ?? '',
       thumbnailUrl: (map['thumbnailUrl'] as String?) ?? '',
@@ -37,6 +85,8 @@ class ProfessionalOrderItem extends Equatable {
   Map<String, dynamic> toMap() {
     return {
       'productId': productId,
+      if (variantId != null) 'variantId': variantId,
+      if (variantTitle != null) 'variantTitle': variantTitle,
       'title': title,
       'unit': unit,
       'thumbnailUrl': thumbnailUrl,
@@ -47,11 +97,17 @@ class ProfessionalOrderItem extends Equatable {
   }
 
   @override
-  List<Object?> get props => [productId, title, price, quantity, total];
+  List<Object?> get props => [productId, variantId, title, price, quantity, total];
 }
 
 class ProfessionalOrderEntity extends Equatable {
-  final String orderId;
+  final String orderId; // Internal Firestore Document ID (Primary Key for streams, status, database)
+  final String orderNumber; // Public Platform Online Order ID (e.g. JS-284731)
+  final String? sellerOrderNumber; // Shop-scoped Seller Order Number (e.g. SGJ-019)
+  final String channelId; // Channel ID (e.g. JAMUI_SERVICES)
+  final String? sellerToken; // Optional Packing / Pickup Token (null for now)
+  final String? invoiceNumber; // Optional Legal Invoice Number (null for now)
+  final String? shopCode; // Permanent Seller Shop Code (e.g. SGJ)
   final String customerId;
   final String customerName;
   final String customerPhone;
@@ -72,9 +128,16 @@ class ProfessionalOrderEntity extends Equatable {
   final DateTime createdAt;
   final String? rejectionReason;
   final String? deliveryOtp;
+  final String? idempotencyKey;
 
   const ProfessionalOrderEntity({
     required this.orderId,
+    String? orderNumber,
+    this.sellerOrderNumber,
+    this.channelId = 'JAMUI_SERVICES',
+    this.sellerToken,
+    this.invoiceNumber,
+    this.shopCode,
     required this.customerId,
     this.customerName = '',
     this.customerPhone = '',
@@ -95,7 +158,8 @@ class ProfessionalOrderEntity extends Equatable {
     required this.createdAt,
     this.rejectionReason,
     this.deliveryOtp,
-  });
+    this.idempotencyKey,
+  }) : orderNumber = orderNumber ?? orderId;
 
   factory ProfessionalOrderEntity.fromMap(Map<String, dynamic> map, String id) {
     DateTime created = DateTime.now();
@@ -111,8 +175,17 @@ class ProfessionalOrderEntity extends Equatable {
             .toList() ??
         [];
 
+    final effectiveOrderId = id.isNotEmpty ? id : ((map['id'] as String?) ?? (map['orderId'] as String?) ?? '');
+    final effectiveOrderNumber = (map['orderNumber'] as String?) ?? (map['orderId'] as String?) ?? effectiveOrderId;
+
     return ProfessionalOrderEntity(
-      orderId: (map['orderId'] as String?) ?? (map['orderNumber'] as String?) ?? id,
+      orderId: effectiveOrderId,
+      orderNumber: effectiveOrderNumber,
+      sellerOrderNumber: map['sellerOrderNumber'] as String?,
+      channelId: (map['channelId'] as String?) ?? 'JAMUI_SERVICES',
+      sellerToken: map['sellerToken'] as String?,
+      invoiceNumber: map['invoiceNumber'] as String?,
+      shopCode: map['shopCode'] as String?,
       customerId: (map['customerId'] as String?) ?? '',
       customerName: (map['customerName'] as String?) ?? '',
       customerPhone: (map['customerPhone'] as String?) ?? '',
@@ -133,12 +206,20 @@ class ProfessionalOrderEntity extends Equatable {
       createdAt: created,
       rejectionReason: map['rejectionReason'] as String?,
       deliveryOtp: map['deliveryOtp'] as String?,
+      idempotencyKey: map['idempotencyKey'] as String?,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'orderId': orderId,
+      'id': orderId,
+      'orderNumber': orderNumber,
+      if (sellerOrderNumber != null) 'sellerOrderNumber': sellerOrderNumber,
+      'channelId': channelId,
+      if (sellerToken != null) 'sellerToken': sellerToken,
+      if (invoiceNumber != null) 'invoiceNumber': invoiceNumber,
+      if (shopCode != null) 'shopCode': shopCode,
       'customerId': customerId,
       'customerName': customerName,
       'customerPhone': customerPhone,
@@ -146,11 +227,13 @@ class ProfessionalOrderEntity extends Equatable {
       'shopName': shopName,
       'shopPhone': shopPhone,
       'fulfillmentType': fulfillmentType,
-      'deliveryAddress': deliveryAddress,
+      'deliveryMethod': fulfillmentType,
+      if (deliveryAddress != null) 'deliveryAddress': deliveryAddress,
       'customerNotes': customerNotes,
       'items': items.map((e) => e.toMap()).toList(),
       'subtotal': subtotal,
       'deliveryCharge': deliveryCharge,
+      'deliveryFee': deliveryCharge,
       'discountAmount': discountAmount,
       'totalAmount': totalAmount,
       'paymentMode': paymentMode,
@@ -159,10 +242,84 @@ class ProfessionalOrderEntity extends Equatable {
       'createdAt': Timestamp.fromDate(createdAt),
       'rejectionReason': rejectionReason,
       'deliveryOtp': deliveryOtp,
+      if (idempotencyKey != null) 'idempotencyKey': idempotencyKey,
     };
   }
 
+  ProfessionalOrderEntity copyWith({
+    String? orderId,
+    String? orderNumber,
+    String? sellerOrderNumber,
+    String? channelId,
+    String? sellerToken,
+    String? invoiceNumber,
+    String? shopCode,
+    String? customerId,
+    String? customerName,
+    String? customerPhone,
+    String? shopId,
+    String? shopName,
+    String? shopPhone,
+    String? fulfillmentType,
+    Map<String, dynamic>? deliveryAddress,
+    String? customerNotes,
+    List<ProfessionalOrderItem>? items,
+    double? subtotal,
+    double? deliveryCharge,
+    double? discountAmount,
+    double? totalAmount,
+    String? paymentMode,
+    String? paymentStatus,
+    String? status,
+    DateTime? createdAt,
+    String? rejectionReason,
+    String? deliveryOtp,
+    String? idempotencyKey,
+  }) {
+    return ProfessionalOrderEntity(
+      orderId: orderId ?? this.orderId,
+      orderNumber: orderNumber ?? this.orderNumber,
+      sellerOrderNumber: sellerOrderNumber ?? this.sellerOrderNumber,
+      channelId: channelId ?? this.channelId,
+      sellerToken: sellerToken ?? this.sellerToken,
+      invoiceNumber: invoiceNumber ?? this.invoiceNumber,
+      shopCode: shopCode ?? this.shopCode,
+      customerId: customerId ?? this.customerId,
+      customerName: customerName ?? this.customerName,
+      customerPhone: customerPhone ?? this.customerPhone,
+      shopId: shopId ?? this.shopId,
+      shopName: shopName ?? this.shopName,
+      shopPhone: shopPhone ?? this.shopPhone,
+      fulfillmentType: fulfillmentType ?? this.fulfillmentType,
+      deliveryAddress: deliveryAddress ?? this.deliveryAddress,
+      customerNotes: customerNotes ?? this.customerNotes,
+      items: items ?? this.items,
+      subtotal: subtotal ?? this.subtotal,
+      deliveryCharge: deliveryCharge ?? this.deliveryCharge,
+      discountAmount: discountAmount ?? this.discountAmount,
+      totalAmount: totalAmount ?? this.totalAmount,
+      paymentMode: paymentMode ?? this.paymentMode,
+      paymentStatus: paymentStatus ?? this.paymentStatus,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      rejectionReason: rejectionReason ?? this.rejectionReason,
+      deliveryOtp: deliveryOtp ?? this.deliveryOtp,
+      idempotencyKey: idempotencyKey ?? this.idempotencyKey,
+    );
+  }
+
   @override
-  List<Object?> get props => [orderId, customerId, shopId, status, totalAmount];
+  List<Object?> get props => [
+        orderId,
+        orderNumber,
+        sellerOrderNumber,
+        channelId,
+        customerId,
+        shopId,
+        status,
+        totalAmount,
+        createdAt,
+        idempotencyKey,
+      ];
 }
 

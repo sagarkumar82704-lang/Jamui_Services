@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../bloc/provider_auth_bloc.dart';
 import '../bloc/provider_auth_event.dart';
 import '../bloc/provider_auth_state.dart';
-import 'provider_account_recovery_page.dart';
 
 class ProviderForgotPasswordPage extends StatefulWidget {
   const ProviderForgotPasswordPage({super.key});
@@ -61,13 +61,15 @@ class _ProviderForgotPasswordPageState extends State<ProviderForgotPasswordPage>
           builder: (context, state) {
             final isLoading = state is ProviderAuthLoading;
 
-            return Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+            return Center(
+              child: SingleChildScrollView(
+                child: ResponsiveFormShell(
+                  maxWidth: 460,
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                     const Icon(Icons.lock_reset_rounded, size: 64, color: AppColors.primary),
                     const SizedBox(height: 16),
                     const Text(
@@ -112,29 +114,29 @@ class _ProviderForgotPasswordPageState extends State<ProviderForgotPasswordPage>
                           : const Text('रीसेट लिंक भेजें', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                     const SizedBox(height: 20),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => BlocProvider.value(
-                              value: context.read<ProviderAuthBloc>(),
-                              child: const ProviderAccountRecoveryPage(),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Row(
+                        children: const [
+                          Icon(Icons.info_outline, size: 20, color: AppColors.textSecondary),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'अगर आपको रजिस्टर्ड ईमेल याद नहीं है या सहायता चाहिए, तो कृपया एडमिन सपोर्ट से संपर्क करें।',
+                              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                             ),
                           ),
-                        );
-                      },
-                      icon: const Icon(Icons.phonelink_lock_rounded, size: 18),
-                      label: const Text(
-                        'खाता केवल मोबाइल नंबर से है? OTP से पासवर्ड लिंक करें',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ],
                       ),
                     ),
                   ],
+                ),
+                  ),
                 ),
               ),
             );

@@ -1,3 +1,4 @@
+import '../config/app_environment.dart';
 import '../services/remote_config_service.dart';
 
 /// Centralized, non-breaking image URL resolver for Jamui Services (Provider App).
@@ -18,16 +19,18 @@ class AppImageUrlResolver {
   /// Priority:
   /// 1. Explicit in-memory override (e.g. from unit tests)
   /// 2. RemoteConfigService.imageBaseUrl (Firestore/Remote Config synced)
-  /// 3. Empty string fallback (safe, non-breaking)
+  /// 3. AppEnvironmentConfig.defaultImageBaseUrl (environment-aware fallback)
   static String get activeBaseUrl {
-    if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
+    if (_overrideBaseUrl != null) {
       return _overrideBaseUrl!;
     }
     try {
-      return RemoteConfigService().imageBaseUrl.trim();
-    } catch (_) {
-      return '';
-    }
+      final configUrl = RemoteConfigService().imageBaseUrl.trim();
+      if (configUrl.isNotEmpty) {
+        return configUrl;
+      }
+    } catch (_) {}
+    return AppEnvironmentConfig.defaultImageBaseUrl;
   }
 
   /// Resolves any raw image URL, key, or path into a ready-to-load URI string.

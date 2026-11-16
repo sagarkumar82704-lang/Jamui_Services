@@ -364,11 +364,15 @@ class _ProviderLocationPickerScreenState extends State<ProviderLocationPickerScr
 
         // 2. Search Bar & Dropdown
         SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 600),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                 Container(
                   height: 52,
                   decoration: BoxDecoration(
@@ -531,6 +535,8 @@ class _ProviderLocationPickerScreenState extends State<ProviderLocationPickerScr
                 ],
               ],
             ),
+              ),
+            ),
           ),
         ),
 
@@ -569,8 +575,12 @@ class _ProviderLocationPickerScreenState extends State<ProviderLocationPickerScr
           left: 0,
           right: 0,
           bottom: 0,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
@@ -755,9 +765,12 @@ class _ProviderLocationPickerScreenState extends State<ProviderLocationPickerScr
                         children: [
                           Icon(Icons.check_circle_outline_rounded, size: 20),
                           SizedBox(width: 8),
-                          Text(
-                            'यह स्थान और दायरा कन्फर्म करें',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                          Flexible(
+                            child: Text(
+                              'यह स्थान और दायरा कन्फर्म करें',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ],
                       ),
@@ -765,6 +778,8 @@ class _ProviderLocationPickerScreenState extends State<ProviderLocationPickerScr
                   ),
                 ],
               ),
+            ),
+          ),
             ),
           ),
         ),

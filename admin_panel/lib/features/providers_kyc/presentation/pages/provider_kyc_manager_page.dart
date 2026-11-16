@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/utils/admin_image_utils.dart';
@@ -27,6 +28,101 @@ class _ProviderKycManagerPageState extends State<ProviderKycManagerPage> with Si
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _viewCertificateDocument(AdminProviderKycEntity item) async {
+    final rawKey = item.experienceCertificateUrl.trim();
+    if (rawKey.isEmpty) return;
+
+    // 1. If it's a legacy external/Firebase Storage URL and not an R2 key or private bucket, open directly
+    if ((rawKey.startsWith('http://') || rawKey.startsWith('https://')) &&
+        !rawKey.contains('.r2.cloudflarestorage.com') &&
+        !rawKey.contains('jamui-services-private')) {
+      WhatsAppImageViewerDialog.show(
+        context,
+        imageUrl: rawKey,
+        title: 'अनुभव प्रमाण पत्र: ${item.fullName}',
+        subtitle: item.previousOrganization.isNotEmpty ? item.previousOrganization : item.businessName,
+      );
+      return;
+    }
+
+    // 2. Clean key if wrapped in URL structure
+    String cleanKey = rawKey;
+    if (cleanKey.startsWith('http://') || cleanKey.startsWith('https://')) {
+      try {
+        final uri = Uri.parse(cleanKey);
+        cleanKey = uri.path;
+        if (cleanKey.startsWith('/')) cleanKey = cleanKey.substring(1);
+        if (cleanKey.startsWith('jamui-services-private-staging/')) {
+          cleanKey = cleanKey.replaceFirst('jamui-services-private-staging/', '');
+        } else if (cleanKey.startsWith('jamui-services-private-prod/')) {
+          cleanKey = cleanKey.replaceFirst('jamui-services-private-prod/', '');
+        }
+      } catch (_) {}
+    }
+
+    // 3. Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Color(0xFF0F172A)),
+                SizedBox(height: 16),
+                Text(
+                  'सुरक्षित प्रमाण पत्र लोड हो रहा है...',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-south1')
+          .httpsCallable('getSecureDocumentViewUrl');
+      final response = await callable.call(<String, dynamic>{
+        'objectKey': cleanKey,
+      }).timeout(const Duration(seconds: 15));
+
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+
+      final data = response.data;
+      final viewUrl = (data is Map) ? (data['viewUrl'] as String?) : null;
+
+      if (viewUrl != null && viewUrl.isNotEmpty) {
+        if (mounted) {
+          WhatsAppImageViewerDialog.show(
+            context,
+            imageUrl: viewUrl,
+            title: 'अनुभव प्रमाण पत्र: ${item.fullName}',
+            subtitle: item.previousOrganization.isNotEmpty ? item.previousOrganization : item.businessName,
+          );
+        }
+      } else {
+        throw Exception('सुरक्षित देखने का लिंक प्राप्त नहीं हुआ।');
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('दस्तावेज़ खोलने में त्रुटि: ${e.toString().replaceAll("Exception: ", "")}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -206,12 +302,7 @@ class _ProviderKycManagerPageState extends State<ProviderKycManagerPage> with Si
                         GestureDetector(
                           onTap: () {
                             if (item.experienceCertificateUrl.isNotEmpty) {
-                              WhatsAppImageViewerDialog.show(
-                                context,
-                                imageUrl: item.experienceCertificateUrl,
-                                title: 'अनुभव प्रमाण पत्र: ${item.fullName}',
-                                subtitle: item.previousOrganization.isNotEmpty ? item.previousOrganization : item.businessName,
-                              );
+                              _viewCertificateDocument(item);
                             }
                           },
                           child: Row(

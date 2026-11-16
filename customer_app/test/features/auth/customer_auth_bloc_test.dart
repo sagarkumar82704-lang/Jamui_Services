@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:apna_jamui_customer/features/auth/domain/entities/customer_entity.dart';
 import 'package:apna_jamui_customer/features/auth/domain/repositories/customer_auth_repository.dart';
 import 'package:apna_jamui_customer/features/auth/presentation/bloc/customer_auth_bloc.dart';
@@ -45,47 +46,15 @@ class FakeCustomerAuthRepository implements CustomerAuthRepository {
   Future<Map<String, dynamic>?> getProviderProfile(String uid) async => mockProvider;
 
   @override
-  Future<void> sendPhoneOtp({
-    required String phoneNumber,
-    int? resendToken,
-    required void Function(String verificationId, int? resendToken) onCodeSent,
-    required void Function(String errorMessage) onError,
-    required void Function(PhoneAuthCredential credential) onVerificationCompleted,
-  }) async {
-    onCodeSent('test_verification_id_123', resendToken ?? 999);
-  }
-
-  @override
-  Future<UserCredential> verifyOtpCode({
-    required String verificationId,
-    required String smsCode,
+  Future<CustomerEntity?> signInWithEmail({
+    required String email,
+    required String password,
   }) async {
     if (shouldThrowOnVerify) {
       throw Exception(verifyErrorMessage);
     }
-    return FakeUserCredential(
-      user: FakeUser(
-        uid: 'test_uid_456',
-        phoneNumber: '+919876543210',
-      ),
-    );
+    return mockCustomer;
   }
-
-  @override
-  Future<UserCredential> signInWithPhoneCredential(PhoneAuthCredential credential) async {
-    return FakeUserCredential(
-      user: FakeUser(
-        uid: 'test_uid_456',
-        phoneNumber: '+919876543210',
-      ),
-    );
-  }
-
-  @override
-  Future<CustomerEntity?> signInWithEmail({
-    required String email,
-    required String password,
-  }) async => mockCustomer;
 
   @override
   Future<CustomerEntity?> registerWithEmail({
@@ -97,22 +66,12 @@ class FakeCustomerAuthRepository implements CustomerAuthRepository {
     String? address,
     double? latitude,
     double? longitude,
-  }) async => mockCustomer;
-
-  @override
-  Future<void> linkEmailToCurrentAccount({
-    required String email,
-    required String password,
-  }) async {}
-
-  @override
-  Future<int> migrateOldCustomerData({
-    required String phoneNumber,
-    required String newUid,
-  }) async => 0;
-
-  @override
-  bool isCurrentAccountPhoneOnly() => false;
+  }) async {
+    if (shouldThrowOnVerify) {
+      throw Exception(verifyErrorMessage);
+    }
+    return mockCustomer;
+  }
 
   @override
   Future<void> sendPasswordResetEmail(String email) async {}
@@ -129,7 +88,7 @@ class FakeCustomerAuthRepository implements CustomerAuthRepository {
 }
 
 void main() {
-  group('CustomerAuthBloc - Phone OTP & Dual Profile Routing Tests', () {
+  group('CustomerAuthBloc - Email/Password & Profile Routing Tests', () {
     late FakeCustomerAuthRepository repository;
     late CustomerAuthBloc authBloc;
 
@@ -144,6 +103,7 @@ void main() {
     );
 
     setUp(() {
+      SharedPreferences.setMockInitialValues({});
       repository = FakeCustomerAuthRepository();
       authBloc = CustomerAuthBloc(authRepository: repository);
     });
@@ -156,125 +116,59 @@ void main() {
       expect(authBloc.state, isA<CustomerAuthInitialState>());
     });
 
-    test('SendCustomerPhoneOtpEvent triggers CustomerOtpSentState', () async {
-      final expectedStates = [
-        isA<CustomerAuthLoadingState>(),
-        isA<CustomerOtpSentState>()
-            .having((s) => s.verificationId, 'verificationId', 'test_verification_id_123')
-            .having((s) => s.phoneNumber, 'phoneNumber', '+919876543210'),
-      ];
-
-      expectLater(authBloc.stream, emitsInOrder(expectedStates));
-
-      authBloc.add(const SendCustomerPhoneOtpEvent('+919876543210'));
-    });
-
-    test('VerifyCustomerPhoneOtpEvent routes to CustomerAuthenticatedState when user has BOTH profiles (Strict Separation)', () async {
+    test('SignInWithEmailEvent emits CustomerAuthenticatedState on success', () async {
       repository.mockCustomer = testCustomer;
-      repository.mockProvider = {
-        'id': 'test_uid_456',
-        'businessName': 'सागर इलेक्ट्रॉनिक्स',
-        'status': 'approved',
-        'isVerified': true,
-      };
-
-      // Even if provider profile exists, Customer App MUST route to CustomerAuthenticatedState
-      final expectedStates = [
-        isA<CustomerAuthLoadingState>(),
-        isA<CustomerAuthLoadingState>(),
-        isA<CustomerAuthenticatedState>()
-            .having((s) => s.customer.fullName, 'customer.fullName', 'सागर कुमार'),
-      ];
-
-      expectLater(authBloc.stream, emitsInOrder(expectedStates));
-
-      authBloc.add(const VerifyCustomerPhoneOtpEvent(
-        verificationId: 'test_verification_id_123',
-        smsCode: '123456',
-      ));
-    });
-
-    test('VerifyCustomerPhoneOtpEvent routes to CustomerAuthenticatedState when user has CUSTOMER profile only', () async {
-      repository.mockCustomer = testCustomer;
-      repository.mockProvider = null;
 
       final expectedStates = [
         isA<CustomerAuthLoadingState>(),
         isA<CustomerAuthLoadingState>(),
         isA<CustomerAuthenticatedState>()
-            .having((s) => s.customer.fullName, 'customer.fullName', 'सागर कुमार'),
+            .having((s) => s.customer.fullName, 'customer.fullName', 'सागर कुमार')
+            .having((s) => s.customer.email, 'customer.email', 'sagar@example.com'),
       ];
 
       expectLater(authBloc.stream, emitsInOrder(expectedStates));
 
-      authBloc.add(const VerifyCustomerPhoneOtpEvent(
-        verificationId: 'test_verification_id_123',
-        smsCode: '123456',
+      authBloc.add(const SignInWithEmailEvent(
+        email: 'sagar@example.com',
+        password: 'password123',
       ));
     });
 
-    test('VerifyCustomerPhoneOtpEvent routes to CustomerProfileSetupRequiredState with null email when user is PROVIDER only (Never hijacks or leaks email)', () async {
-      repository.mockCustomer = null;
-      repository.mockProvider = {
-        'id': 'test_uid_456',
-        'businessName': 'जमुई प्लंबिंग सर्विसेज',
-        'email': 'provider@plumbing.com',
-        'status': 'approved',
-        'isVerified': true,
-      };
-
-      // In Customer App, if no customer doc exists, user must set up customer profile.
-      // Provider email is strictly NOT leaked!
-      final expectedStates = [
-        isA<CustomerAuthLoadingState>(),
-        isA<CustomerAuthLoadingState>(),
-        isA<CustomerProfileSetupRequiredState>()
-            .having((s) => s.userId, 'userId', 'test_uid_456')
-            .having((s) => s.email, 'email', isNull),
-      ];
-
-      expectLater(authBloc.stream, emitsInOrder(expectedStates));
-
-      authBloc.add(const VerifyCustomerPhoneOtpEvent(
-        verificationId: 'test_verification_id_123',
-        smsCode: '123456',
-      ));
-    });
-
-    test('VerifyCustomerPhoneOtpEvent routes to CustomerProfileSetupRequiredState when neither profile exists', () async {
-      repository.mockCustomer = null;
-      repository.mockProvider = null;
-
-      final expectedStates = [
-        isA<CustomerAuthLoadingState>(),
-        isA<CustomerAuthLoadingState>(),
-        isA<CustomerProfileSetupRequiredState>()
-            .having((s) => s.userId, 'userId', 'test_uid_456'),
-      ];
-
-      expectLater(authBloc.stream, emitsInOrder(expectedStates));
-
-      authBloc.add(const VerifyCustomerPhoneOtpEvent(
-        verificationId: 'test_verification_id_123',
-        smsCode: '123456',
-      ));
-    });
-
-    test('VerifyCustomerPhoneOtpEvent emits CustomerAuthFailureState on wrong OTP', () async {
+    test('SignInWithEmailEvent emits CustomerAuthFailureState on failure', () async {
       repository.shouldThrowOnVerify = true;
-      repository.verifyErrorMessage = 'दर्ज किया गया OTP कोड गलत है';
+      repository.verifyErrorMessage = 'गलत पासवर्ड दर्ज किया गया है।';
 
       final expectedStates = [
         isA<CustomerAuthLoadingState>(),
         isA<CustomerAuthFailureState>()
-            .having((s) => s.errorMessage, 'errorMessage', contains('गलत है')),
+            .having((s) => s.errorMessage, 'errorMessage', contains('गलत पासवर्ड')),
       ];
 
       expectLater(authBloc.stream, emitsInOrder(expectedStates));
 
-      authBloc.add(const VerifyCustomerPhoneOtpEvent(
-        verificationId: 'test_verification_id_123',
-        smsCode: '000000',
+      authBloc.add(const SignInWithEmailEvent(
+        email: 'sagar@example.com',
+        password: 'wrong_password',
+      ));
+    });
+
+    test('RegisterWithEmailEvent emits CustomerAuthenticatedState on successful registration', () async {
+      repository.mockCustomer = testCustomer;
+
+      final expectedStates = [
+        isA<CustomerAuthLoadingState>(),
+        isA<CustomerAuthenticatedState>()
+            .having((s) => s.customer.fullName, 'customer.fullName', 'सागर कुमार'),
+      ];
+
+      expectLater(authBloc.stream, emitsInOrder(expectedStates));
+
+      authBloc.add(const RegisterWithEmailEvent(
+        email: 'sagar@example.com',
+        password: 'password123',
+        fullName: 'सागर कुमार',
+        phoneNumber: '+919876543210',
       ));
     });
 

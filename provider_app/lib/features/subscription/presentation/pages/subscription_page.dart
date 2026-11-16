@@ -14,6 +14,7 @@ import '../../data/datasources/subscription_remote_data_source.dart';
 import '../../domain/entities/subscription_plan.dart';
 
 import '../../../../core/config/razorpay_payment_config.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../../main.dart';
 
 class SubscriptionPage extends StatefulWidget {
@@ -587,10 +588,13 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
         },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+          padding: EdgeInsets.zero,
+          child: ResponsiveContentContainer(
+            maxWidth: 1080,
+            padding: ResponsiveLayout.pagePadding(context),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
             if (widget.isPostRegistration) ...[
               Container(
                 margin: const EdgeInsets.only(bottom: 16),
@@ -727,16 +731,22 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.workspace_premium, color: AppColors.gold, size: 24),
-                          const SizedBox(width: 8),
-                          Text(
-                            profile.subscriptionPlan.toUpperCase(),
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
-                        ],
+                      Expanded(
+                        child: Row(
+                          children: [
+                            const Icon(Icons.workspace_premium, color: AppColors.gold, size: 24),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                profile.subscriptionPlan.toUpperCase(),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
+                      const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
@@ -917,11 +927,15 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                 ),
               )
             else
-              Column(
+              ResponsiveCardGrid(
+                tabletColumns: 2,
+                desktopColumns: 2,
+                largeDesktopColumns: 3,
                 children: _plans.map((plan) => _buildPlanCard(context, plan)).toList(),
               ),
           ],
         ),
+          ),
       ),
     ),
   );
@@ -929,7 +943,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
 
   Widget _buildPlanCard(BuildContext context, SubscriptionPlan plan) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -964,8 +978,12 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
           ],
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(plan.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+              Expanded(
+                child: Text(plan.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+              ),
+              const SizedBox(width: 8),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -976,10 +994,13 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
               ),
             ],
           ),
-          Row(
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text('${plan.durationDays} दिनों के लिए', style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
-              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
@@ -991,8 +1012,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                   style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.bold),
                 ),
               ),
-              if (plan.targetAudience == 'existing_provider') ...[
-                const SizedBox(width: 6),
+              if (plan.targetAudience == 'existing_provider')
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
@@ -1004,7 +1024,6 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                     style: TextStyle(fontSize: 10, color: Colors.amber.shade900, fontWeight: FontWeight.bold),
                   ),
                 ),
-              ],
             ],
           ),
           const SizedBox(height: 6),

@@ -478,6 +478,15 @@ service cloud.firestore {
              shopData.get('isDeleted', false) == false;
     }
 
+    // Same as above PLUS server-time subscription expiry. Used where rules read the shop via get()
+    // (products/variants), so expired shops stop exposing catalog data even before the daily
+    // expiry job flips isSubscriptionActive. (Not used for shop-list queries: rules are not filters.)
+    function isDiamondShopSellableNow(shopData) {
+      return isDiamondShopEligibleAndLive(shopData) &&
+             (shopData.get('subscriptionExpiry', null) == null ||
+              shopData.get('subscriptionExpiry', null) > request.time);
+    }
+
     // Product Store Category Validation Helper
     // 1. Legacy products or unassigned products (storeCategoryId == null or '') are allowed.
     // 2. When storeCategoryId is provided, it MUST exist in this shop's own store_categories subcollection.
@@ -526,7 +535,18 @@ service cloud.firestore {
           'orderId',
           'razorpayPaymentId',
           'razorpayOrderId',
-          'razorpaySignature'
+          'razorpaySignature',
+          'maxProductsLimit',
+          'productLimit',
+          'maxProducts',
+          'maxVariantsPerProduct',
+          'variantLimit',
+          'features',
+          'imageLimit',
+          'storageLimitMb',
+          'subscriptionPlanId',
+          'subscriptionPlanName',
+          'productQuotaCheckedAt'
         ])
       );
       allow update: if isAdmin() || (
@@ -562,7 +582,22 @@ service cloud.firestore {
           'totalOrders',
           'totalRevenue',
           'subscriptionPlan',
-          'subscriptionPlanId'
+          'subscriptionPlanId',
+          'subscriptionPlanName',
+          'subscriptionDurationDays',
+          'maxProductsLimit',
+          'productLimit',
+          'maxProducts',
+          'maxVariantsPerProduct',
+          'variantLimit',
+          'features',
+          'imageLimit',
+          'storageLimitMb',
+          'paymentAmount',
+          'paymentAmountInPaise',
+          'paymentOrderId',
+          'subscriptionExpiredAt',
+          'productQuotaCheckedAt'
         ])
       );
       allow delete: if isAdmin();
@@ -594,6 +629,40 @@ service cloud.firestore {
         );
       }
 
+      // Store Features & Settings Subcollection (Delivery policies, min order, vacation mode)
+      match /store_features/{docId} {
+        allow read: if isAdmin() ||
+                       (isAuthenticated() && (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid)) ||
+                       isDiamondShopEligibleAndLive(get(/databases/$(database)/documents/diamond_shops/$(shopId)).data);
+        allow create, update: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked'
+        );
+        allow delete: if isAdmin();
+      }
+
+      // Custom Attribute Templates Subcollection (Seller-defined variant types, size guides)
+      match /attribute_templates/{templateId} {
+        allow read: if isAdmin() ||
+                       (isAuthenticated() && (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid)) ||
+                       isDiamondShopEligibleAndLive(get(/databases/$(database)/documents/diamond_shops/$(shopId)).data);
+        allow create, update: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked' &&
+          request.resource.data.get('shopId', shopId) == shopId
+        );
+        allow delete: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked'
+        );
+      }
+
       // Products Subcollection:
       // Public can ONLY read if product is available, not deleted, AND the parent shop is approved and active!
       // Vendor B CANNOT edit or delete Vendor A's products.
@@ -602,22 +671,27 @@ service cloud.firestore {
                        (isAuthenticated() && (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid)) ||
                        (resource.data.get('isAvailable', false) == true &&
                         resource.data.get('isDeleted', false) == false &&
-                        isDiamondShopEligibleAndLive(get(/databases/$(database)/documents/diamond_shops/$(shopId)).data));
-        allow create: if isAdmin() || (
-          isAuthenticated() &&
-          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
-          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
-          get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked' &&
-          request.resource.data.get('shopId', shopId) == shopId &&
-          isValidProductStoreCategory(shopId, request.resource.data, null)
-        );
+                        isDiamondShopSellableNow(get(/databases/$(database)/documents/diamond_shops/$(shopId)).data));
+        // Product CREATION is a trusted server operation (callable createProfessionalProduct) so the
+        // subscription product quota is enforced transactionally. Direct client creates are denied.
+        allow create: if isAdmin();
         allow update: if isAdmin() || (
           isAuthenticated() &&
           (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
           get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
           get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked' &&
           request.resource.data.get('shopId', shopId) == shopId &&
-          isValidProductStoreCategory(shopId, request.resource.data, resource.data)
+          isValidProductStoreCategory(shopId, request.resource.data, resource.data) &&
+          // Zero-Trust Security: Prevent direct client modification of inventory & financial fields
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'stockQuantity',
+            'totalStockQuantity',
+            'baseStockQuantity',
+            'totalOrders',
+            'totalRevenue',
+            'rating',
+            'ratingCount'
+          ])
         );
         allow delete: if isAdmin() || (
           isAuthenticated() &&
@@ -625,6 +699,65 @@ service cloud.firestore {
           get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
           get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked'
         );
+
+        // Private Pricing & Costing (Strictly Vendor-Only & Admin; Public Customers have ZERO access)
+        match /private_pricing/{docId} {
+          allow read, write: if isAdmin() || (
+            isAuthenticated() &&
+            (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+            get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+            get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked'
+          );
+        }
+
+        // Product Variants Subcollection:
+        // 1. Admin has authorized full management.
+        // 2. Shopkeeper (owner) can manage their variants (create, update, soft deactivation).
+        // 3. Other vendors CANNOT read or manipulate another shop's variants.
+        // 4. Public Customers can ONLY read active variants of available products in live shops.
+        // 5. Cross-shop or cross-product injection prevented by matching parent IDs.
+        // 6. Direct client modification of variant stockQuantity is strictly blocked (must use adjustDiamondProductStock).
+        match /variants/{variantId} {
+          allow read: if isAdmin() ||
+                         (isAuthenticated() && (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid)) ||
+                         (resource.data.get('isActive', false) == true &&
+                          get(/databases/$(database)/documents/diamond_shops/$(shopId)/products/$(productId)).data.get('isAvailable', false) == true &&
+                          get(/databases/$(database)/documents/diamond_shops/$(shopId)/products/$(productId)).data.get('isDeleted', false) == false &&
+                          isDiamondShopSellableNow(get(/databases/$(database)/documents/diamond_shops/$(shopId)).data));
+          allow create: if isAdmin() || (
+            isAuthenticated() &&
+            (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+            get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+            get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked' &&
+            request.resource.data.get('shopId', shopId) == shopId &&
+            request.resource.data.get('productId', productId) == productId
+          );
+          allow update: if isAdmin() || (
+            isAuthenticated() &&
+            (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+            get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+            get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked' &&
+            request.resource.data.get('shopId', shopId) == shopId &&
+            request.resource.data.get('productId', productId) == productId &&
+            // Direct client tampering with variant stock is forbidden
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['stockQuantity'])
+          );
+          allow delete: if isAdmin() || (
+            isAuthenticated() &&
+            (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid) &&
+            get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'suspended' &&
+            get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('status', '') != 'blocked'
+          );
+        }
+      }
+
+      // Stock Movement History Ledger (Vendor-Only & Admin Read; Writes strictly restricted to trusted Cloud Functions)
+      match /stock_movements/{movementId} {
+        allow read: if isAdmin() || (
+          isAuthenticated() &&
+          (request.auth.uid == shopId || get(/databases/$(database)/documents/diamond_shops/$(shopId)).data.get('ownerUid', '') == request.auth.uid)
+        );
+        allow write: if false; // Immutable audit trail managed exclusively by server Cloud Functions
       }
     }
 
@@ -639,7 +772,7 @@ service cloud.firestore {
         resource.data.shopId == request.auth.uid ||
         resource.data.get('ownerUid', '') == request.auth.uid
       );
-      allow write: if isAdmin();
+      allow write: if false; // Zero direct client write; all mutations execute via trusted Cloud Functions
     }
 
     // Audit Logs

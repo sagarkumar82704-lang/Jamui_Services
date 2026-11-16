@@ -24,6 +24,13 @@ class ProfessionalProductEntity extends Equatable {
   final bool isActive;
   final bool isDeleted;
   final Map<String, dynamic> attributes;
+  final bool hasVariants;
+  final double minPrice;
+  final double maxPrice;
+  final List<Map<String, dynamic>> variantOptions;
+  final String stockType; // 'pack' or 'bulk'
+  final String baseUnit; // 'g', 'ml', 'piece'
+  final int baseStockQuantity; // Integer base units for bulk inventory
 
   const ProfessionalProductEntity({
     required this.id,
@@ -49,7 +56,15 @@ class ProfessionalProductEntity extends Equatable {
     this.isActive = true,
     this.isDeleted = false,
     this.attributes = const {},
-  });
+    this.hasVariants = false,
+    double? minPrice,
+    double? maxPrice,
+    this.variantOptions = const [],
+    this.stockType = 'pack',
+    this.baseUnit = 'piece',
+    this.baseStockQuantity = 0,
+  })  : minPrice = minPrice ?? sellingPrice,
+        maxPrice = maxPrice ?? sellingPrice;
 
   String get displayName => titleEnglish.isNotEmpty ? titleEnglish : titleHindi;
   String get name => displayName;
@@ -113,6 +128,17 @@ class ProfessionalProductEntity extends Equatable {
       isActive: (map['isActive'] as bool?) ?? true,
       isDeleted: (map['isDeleted'] as bool?) ?? false,
       attributes: parsedAttrs,
+      hasVariants: (map['hasVariants'] as bool?) ?? false,
+      minPrice: (map['minPrice'] as num?)?.toDouble() ?? sellPrice,
+      maxPrice: (map['maxPrice'] as num?)?.toDouble() ?? sellPrice,
+      variantOptions: (map['variantOptions'] as List<dynamic>?)
+              ?.whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList() ??
+          const [],
+      stockType: (map['stockType'] as String?) ?? 'pack',
+      baseUnit: (map['baseUnit'] as String?) ?? 'piece',
+      baseStockQuantity: (map['baseStockQuantity'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -140,6 +166,13 @@ class ProfessionalProductEntity extends Equatable {
       'isActive': isActive,
       'isDeleted': isDeleted,
       'attributes': attributes,
+      'hasVariants': hasVariants,
+      'minPrice': minPrice,
+      'maxPrice': maxPrice,
+      'variantOptions': variantOptions,
+      'stockType': stockType,
+      'baseUnit': baseUnit,
+      'baseStockQuantity': baseStockQuantity,
     };
   }
 

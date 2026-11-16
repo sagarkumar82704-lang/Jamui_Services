@@ -24,31 +24,6 @@ abstract class ProviderRepository {
   Future<void> signOut();
   User? getCurrentUser();
 
-  // Credential Linking & Safe Migration
-  Future<User> linkEmailPasswordCredential({
-    required String email,
-    required String password,
-  });
-
-  Future<ProviderProfileEntity> safeMigratePhoneAccount({
-    required String providerId,
-    required String email,
-    required String password,
-  });
-
-  // Phone OTP
-  Future<void> sendPhoneOtp({
-    required String phoneNumber,
-    required void Function(String verificationId, int? resendToken) onCodeSent,
-    required void Function(String errorMessage) onError,
-    required void Function(PhoneAuthCredential credential) onVerificationCompleted,
-  });
-
-  Future<UserCredential> verifyOtpCode({
-    required String verificationId,
-    required String smsCode,
-  });
-
   // Profile Operations
   Future<ProviderProfileEntity?> getProfile(String providerId);
   Future<ProviderProfileEntity?> findRegisteredProviderByPhone(String rawPhoneNumber);

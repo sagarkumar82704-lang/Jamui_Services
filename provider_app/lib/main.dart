@@ -6,15 +6,20 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'config/firebase/firebase_options.dart';
+import 'core/config/app_environment.dart';
 import 'core/config/emulator_config.dart';
 import 'core/constants/app_brand.dart';
 import 'core/constants/app_colors.dart';
+import 'core/localization/provider_locale_controller.dart';
 import 'core/widgets/app_logo.dart';
+import 'core/widgets/responsive_shell.dart';
 import 'core/widgets/whatsapp_image_viewer.dart';
 import 'core/utils/app_image_utils.dart';
+import 'core/utils/responsive_layout.dart';
 import 'features/analytics/presentation/pages/analytics_page.dart';
 import 'features/auth/data/datasources/firebase_provider_remote_data_source.dart';
 import 'features/auth/data/repositories/provider_repository_impl.dart';
@@ -58,18 +63,21 @@ bool isProviderFirebaseInitialized = false;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
-    final options = EmulatorConfig.getEffectiveOptions(DefaultFirebaseOptions.currentPlatform);
+    AppEnvironmentConfig.logEnvironment('Provider App');
+    final options = DefaultFirebaseOptions.currentPlatform;
     await Firebase.initializeApp(
       options: options,
     );
     isProviderFirebaseInitialized = true;
     debugPrint('🔥 [JAMUI SERVICES] Provider App Firebase Initialized Successfully');
 
-    try {
-      await EmulatorConfig.configureEmulators();
-    } on EmulatorSafetyException catch (e) {
-      runApp(FatalEmulatorHaltApp(message: e.message));
-      return;
+    if (AppEnvironmentConfig.isEmulator) {
+      try {
+        await EmulatorConfig.configureEmulators();
+      } on EmulatorSafetyException catch (e) {
+        runApp(FatalEmulatorHaltApp(message: e.message));
+        return;
+      }
     }
 
     if (kIsWeb) {
@@ -97,8 +105,17 @@ void main() async {
     unawaited(RemoteConfigService().initialize());
   } catch (e, stackTrace) {
     isProviderFirebaseInitialized = false;
-    debugPrint('⚠️ [JAMUI SERVICES] Provider App Firebase Initialization Error: $e');
+    debugPrint('🚨 [JAMUI SERVICES] Provider App Environment/Firebase Initialization Error: $e');
     debugPrint('Stack trace: $stackTrace');
+    runApp(FatalEmulatorHaltApp(message: e.toString()));
+    return;
+  }
+
+  // Initialize locale controller before runApp
+  try {
+    await ProviderLocaleController.instance.init();
+  } catch (e) {
+    debugPrint('ProviderLocaleController init notice: $e');
   }
 
   runApp(const JamuiServiceProviderApp());
@@ -122,16 +139,31 @@ class JamuiServiceProviderApp extends StatelessWidget {
           create: (_) => ProviderAuthBloc(providerRepository: repo)..add(CheckAuthStatusEvent()),
         ),
       ],
-      child: MaterialApp(
-        title: 'Jamui Services Partner',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          primaryColor: AppColors.primary,
-          scaffoldBackgroundColor: AppColors.background,
-          textTheme: GoogleFonts.interTextTheme(),
-        ),
-        home: const AuthRouterScreen(),
+      child: ListenableBuilder(
+        listenable: ProviderLocaleController.instance,
+        builder: (context, _) {
+          return MaterialApp(
+            title: 'Jamui Services Partner',
+            debugShowCheckedModeBanner: false,
+            locale: Locale(ProviderLocaleController.instance.currentLocale),
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: const [
+              Locale('hi'),
+              Locale('en'),
+            ],
+            theme: ThemeData(
+              useMaterial3: true,
+              primaryColor: AppColors.primary,
+              scaffoldBackgroundColor: AppColors.background,
+              textTheme: GoogleFonts.interTextTheme(),
+            ),
+            home: const AuthRouterScreen(),
+          );
+        },
       ),
     );
   }
@@ -736,31 +768,52 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
       ProviderBusinessProfileScreen(profile: profile),
     ];
 
-    return Scaffold(
+    return ResponsiveWorkspaceShell(
+      currentIndex: _currentIndex,
+      onDestinationSelected: (i) => setState(() => _currentIndex = i),
+      primaryColor: AppColors.accent,
       backgroundColor: AppColors.background,
+      workspaceTitle: 'JAMUI SERVICES',
+      workspaceSubtitle: 'Service Partner Hub',
+      businessName: profile.businessName.isNotEmpty ? profile.businessName : profile.fullName,
+      categoryLabel: profile.primaryCategoryTitle.isNotEmpty
+          ? profile.primaryCategoryTitle
+          : 'सर्विस प्रोवाइडर',
+      isOnlineOrOpen: profile.isAvailable,
+      statusLabel: profile.isAvailable ? 'ड्यूटी पर (Online)' : 'ऑफलाइन (Offline)',
+      destinations: const [
+        WorkspaceNavDestination(
+          icon: Icons.dashboard_outlined,
+          activeIcon: Icons.dashboard_rounded,
+          label: 'डैशबोर्ड',
+        ),
+        WorkspaceNavDestination(
+          icon: Icons.assignment_outlined,
+          activeIcon: Icons.assignment_rounded,
+          label: 'लीड्स',
+        ),
+        WorkspaceNavDestination(
+          icon: Icons.analytics_outlined,
+          activeIcon: Icons.analytics_rounded,
+          label: 'एनालिटिक्स',
+        ),
+        WorkspaceNavDestination(
+          icon: Icons.person_outline_rounded,
+          activeIcon: Icons.person_rounded,
+          label: 'प्रोफाइल',
+        ),
+      ],
       body: SafeArea(child: pages[_currentIndex]),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
-        selectedItemColor: AppColors.accent,
-        unselectedItemColor: AppColors.textMuted,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.dashboard_rounded), label: 'डैशबोर्ड'),
-          BottomNavigationBarItem(icon: Icon(Icons.assignment_rounded), label: 'लीड्स'),
-          BottomNavigationBarItem(icon: Icon(Icons.analytics_rounded), label: 'एनालिटिक्स'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'प्रोफाइल'),
-        ],
-      ),
     );
   }
 
   Widget _buildDashboardView(BuildContext context, ProviderProfileEntity profile) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: ResponsiveContentContainer(
+        padding: ResponsiveLayout.pagePadding(context),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
           // Inactive Account by Admin Warning Banner
           if (!profile.isActive) ...[
             Container(
@@ -974,23 +1027,28 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      profile.isAvailable ? Icons.circle : Icons.circle_outlined,
-                      color: profile.isAvailable ? AppColors.success : AppColors.textMuted,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      profile.isAvailable ? 'ड्यूटी पर (Online for Leads)' : 'ऑफलाइन (Offline)',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(
+                        profile.isAvailable ? Icons.circle : Icons.circle_outlined,
                         color: profile.isAvailable ? AppColors.success : AppColors.textMuted,
+                        size: 14,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          profile.isAvailable ? 'ड्यूटी पर (Online for Leads)' : 'ऑफलाइन (Offline)',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: profile.isAvailable ? AppColors.success : AppColors.textMuted,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 Switch(
                   value: profile.isAvailable,
@@ -1066,52 +1124,74 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
           const SizedBox(height: 20),
 
           // Quick Navigation Menu Grid
-          Row(
-            children: [
-              Expanded(
-                child: _buildQuickActionCard(
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 680;
+              final actionCards = [
+                _buildQuickActionCard(
                   context,
                   title: 'लिस्टिंग्स व मीडिया',
                   icon: Icons.inventory_2_outlined,
                   color: AppColors.accent,
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProviderListingsPage(profile: profile))),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildQuickActionCard(
+                _buildQuickActionCard(
                   context,
                   title: 'समीक्षाएं (Reviews)',
                   icon: Icons.star_rate_rounded,
                   color: AppColors.gold,
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ReviewsPage(profile: profile))),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _buildQuickActionCard(
+                _buildQuickActionCard(
                   context,
                   title: 'सहायता टिकट (Support)',
                   icon: Icons.support_agent_rounded,
                   color: AppColors.primary,
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SupportPage(profile: profile))),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildQuickActionCard(
+                _buildQuickActionCard(
                   context,
                   title: 'सब्सक्रिप्शन प्लान्स',
                   icon: Icons.workspace_premium,
                   color: Colors.purple.shade700,
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SubscriptionPage(profile: profile))),
                 ),
-              ),
-            ],
+              ];
+
+              if (isWide) {
+                return Row(
+                  children: [
+                    Expanded(child: actionCards[0]),
+                    const SizedBox(width: 12),
+                    Expanded(child: actionCards[1]),
+                    const SizedBox(width: 12),
+                    Expanded(child: actionCards[2]),
+                    const SizedBox(width: 12),
+                    Expanded(child: actionCards[3]),
+                  ],
+                );
+              }
+
+              return Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(child: actionCards[0]),
+                      const SizedBox(width: 10),
+                      Expanded(child: actionCards[1]),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(child: actionCards[2]),
+                      const SizedBox(width: 10),
+                      Expanded(child: actionCards[3]),
+                    ],
+                  ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 20),
 
@@ -1119,28 +1199,66 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
           const Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('मासिक परफॉरमेंस एनालिटिक्स', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+              Expanded(
+                child: Text(
+                  'मासिक परफॉरमेंस एनालिटिक्स',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                ),
+              ),
+              SizedBox(width: 8),
               Text('Real Firestore Counters', style: TextStyle(fontSize: 11, color: AppColors.success, fontWeight: FontWeight.w600)),
             ],
           ),
           const SizedBox(height: 12),
 
-          // Real Stat Cards
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 1.4,
-            children: [
-              _buildStatCard('Profile Views', '${profile.totalViews}', Icons.visibility_outlined, AppColors.accent, 'ग्राहकों की खोज'),
-              _buildStatCard('Call Clicks', '${profile.totalCalls}', Icons.phone_in_talk_outlined, AppColors.info, 'सीधे फोन कॉल्स'),
-              _buildStatCard('WhatsApp Clicks', '${profile.totalWhatsAppClicks}', Icons.chat_bubble_outline, const Color(0xFF25D366), 'व्हाट्सएप चैट'),
-              _buildStatCard('रेटिंग व स्कोर', '${profile.rating} ★', Icons.star_rate_rounded, AppColors.gold, '${profile.ratingCount} रिव्यूज'),
-            ],
+          // Real Stat Cards (Responsive 4-column on tablet/desktop, 2x2 on mobile)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 680;
+              final statCards = [
+                _buildStatCard('Profile Views', '${profile.totalViews}', Icons.visibility_outlined, AppColors.accent, 'ग्राहकों की खोज'),
+                _buildStatCard('Call Clicks', '${profile.totalCalls}', Icons.phone_in_talk_outlined, AppColors.info, 'सीधे फोन कॉल्स'),
+                _buildStatCard('WhatsApp Clicks', '${profile.totalWhatsAppClicks}', Icons.chat_bubble_outline, const Color(0xFF25D366), 'व्हाट्सएप चैट'),
+                _buildStatCard('रेटिंग व स्कोर', '${profile.rating} ★', Icons.star_rate_rounded, AppColors.gold, '${profile.ratingCount} रिव्यूज'),
+              ];
+
+              if (isWide) {
+                return Row(
+                  children: [
+                    Expanded(child: statCards[0]),
+                    const SizedBox(width: 12),
+                    Expanded(child: statCards[1]),
+                    const SizedBox(width: 12),
+                    Expanded(child: statCards[2]),
+                    const SizedBox(width: 12),
+                    Expanded(child: statCards[3]),
+                  ],
+                );
+              }
+
+              return Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(child: statCards[0]),
+                      const SizedBox(width: 10),
+                      Expanded(child: statCards[1]),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(child: statCards[2]),
+                      const SizedBox(width: 10),
+                      Expanded(child: statCards[3]),
+                    ],
+                  ),
+                ],
+              );
+            },
           ),
         ],
+      ),
       ),
     );
   }
@@ -1675,8 +1793,11 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
               ],
             ),
             const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 10,
+              runSpacing: 8,
               children: [
                 Text(
                   '0% कमीशन • 100% सीधी कमाई',
@@ -1761,15 +1882,20 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.workspace_premium, color: AppColors.gold, size: 22),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${profile.subscriptionPlan.toUpperCase()} PLAN',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                      ),
-                    ],
+                  Expanded(
+                    child: Row(
+                      children: [
+                        const Icon(Icons.workspace_premium, color: AppColors.gold, size: 22),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            '${profile.subscriptionPlan.toUpperCase()} PLAN',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   if (isPremium)
                     Container(
@@ -1794,10 +1920,13 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'क्लाउड स्टोरेज: ${usedMb.toStringAsFixed(1)} / ${maxMb.toStringAsFixed(1)} MB (${remainingMb.toStringAsFixed(1)} MB शेष)',
-                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                  Expanded(
+                    child: Text(
+                      'क्लाउड स्टोरेज: ${usedMb.toStringAsFixed(1)} / ${maxMb.toStringAsFixed(1)} MB (${remainingMb.toStringAsFixed(1)} MB शेष)',
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   Text(
                     'फ़ोटोज़: $totalImages / $maxImages',
                     style: const TextStyle(color: Colors.white70, fontSize: 11),
@@ -2062,7 +2191,7 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
 
   Widget _buildStatCard(String title, String count, IconData icon, Color color, String sub) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -2070,17 +2199,27 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(title, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
-              Icon(icon, color: color, size: 16),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(icon, color: color, size: 18),
             ],
           ),
+          const SizedBox(height: 8),
           Text(count, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)),
-          Text(sub, style: const TextStyle(fontSize: 9, color: AppColors.textMuted)),
+          const SizedBox(height: 4),
+          Text(sub, style: const TextStyle(fontSize: 10, color: AppColors.textMuted), maxLines: 1, overflow: TextOverflow.ellipsis),
         ],
       ),
     );
@@ -2111,20 +2250,26 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(
-                    isComplete ? Icons.verified_user_rounded : Icons.pending_actions_rounded,
-                    color: isComplete ? AppColors.success : AppColors.gold,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Profile Summary',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                  ),
-                ],
+              Expanded(
+                child: Row(
+                  children: [
+                    Icon(
+                      isComplete ? Icons.verified_user_rounded : Icons.pending_actions_rounded,
+                      color: isComplete ? AppColors.success : AppColors.gold,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    const Flexible(
+                      child: Text(
+                        'Profile Summary',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
@@ -2221,11 +2366,12 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 560),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
-        return Padding(
+        return SingleChildScrollView(
           padding: const EdgeInsets.all(20.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2234,15 +2380,20 @@ class _ProviderWorkspaceScreenState extends State<ProviderWorkspaceScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.assignment_turned_in_rounded, color: AppColors.accent),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Profile Completion $completion%',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                      ),
-                    ],
+                  Expanded(
+                    child: Row(
+                      children: [
+                        const Icon(Icons.assignment_turned_in_rounded, color: AppColors.accent),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Profile Completion $completion%',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),

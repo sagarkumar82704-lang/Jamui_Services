@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../data/datasources/professional_provider_remote_data_source.dart';
 import '../../domain/entities/seller_store_category_entity.dart';
+import '../../../../core/utils/responsive_layout.dart';
+import '../../../../core/localization/provider_strings.dart';
 import '../../../../main.dart' show isProviderFirebaseInitialized;
 
 /// UI for managing a seller's private store categories (Level 2).
@@ -373,9 +375,9 @@ class _ProfessionalManageStoreCategoriesPageState
               color: Color(0xFF1E293B), size: 18),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'दुकान श्रेणियां (Store Categories)',
-          style: TextStyle(
+        title: Text(
+          ProviderStrings.manageCategories,
+          style: const TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.bold,
             color: Color(0xFF1E293B),
@@ -421,32 +423,35 @@ class _ProfessionalManageStoreCategoriesPageState
           return Column(
             children: [
               // Informative Banner
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEFF6FF),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFBFDBFE)),
-                ),
-                child: const Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.info_outline_rounded,
-                        color: Color(0xFF1D4ED8), size: 18),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'ये आपकी दुकान की अपनी श्रेणियां हैं (जैसे: दाल, आटा, तेल)। उत्पाद जोड़ते समय आप इन्हीं में से श्रेणी चुन सकेंगे।',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF1E40AF),
-                          height: 1.35,
+              ResponsiveContentContainer(
+                maxWidth: 960,
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFBFDBFE)),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline_rounded,
+                          color: Color(0xFF1D4ED8), size: 18),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'ये आपकी दुकान की अपनी श्रेणियां हैं (जैसे: दाल, आटा, तेल)। उत्पाद जोड़ते समय आप इन्हीं में से श्रेणी चुन सकेंगे।',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF1E40AF),
+                            height: 1.35,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
 
@@ -454,47 +459,59 @@ class _ProfessionalManageStoreCategoriesPageState
               Expanded(
                 child: allCategories.isEmpty
                     ? _buildEmptyState()
-                    : ListView(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        children: [
-                          if (activeCategories.isNotEmpty) ...[
-                            _buildSectionHeader('सक्रिय श्रेणियां (Active)', activeCategories.length, const Color(0xFF16A34A)),
-                            const SizedBox(height: 8),
-                            ...activeCategories.map((c) => _buildCategoryTile(c, allCategories)),
-                          ],
-                          if (inactiveCategories.isNotEmpty) ...[
-                            const SizedBox(height: 18),
-                            _buildSectionHeader('निष्क्रिय श्रेणियां (Inactive)', inactiveCategories.length, const Color(0xFFD97706)),
-                            const SizedBox(height: 8),
-                            ...inactiveCategories.map((c) => _buildCategoryTile(c, allCategories)),
-                          ],
-                        ],
+                    : SingleChildScrollView(
+                        padding: EdgeInsets.zero,
+                        child: ResponsiveContentContainer(
+                          maxWidth: 960,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (activeCategories.isNotEmpty) ...[
+                                _buildSectionHeader('सक्रिय श्रेणियां (Active)', activeCategories.length, const Color(0xFF16A34A)),
+                                const SizedBox(height: 8),
+                                ...activeCategories.map((c) => _buildCategoryTile(c, allCategories)),
+                              ],
+                              if (inactiveCategories.isNotEmpty) ...[
+                                const SizedBox(height: 18),
+                                _buildSectionHeader('निष्क्रिय श्रेणियां (Inactive)', inactiveCategories.length, const Color(0xFFD97706)),
+                                const SizedBox(height: 8),
+                                ...inactiveCategories.map((c) => _buildCategoryTile(c, allCategories)),
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
               ),
 
               // Bottom Action: Add Category
               Container(
-                padding: const EdgeInsets.all(16),
+                width: double.infinity,
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
                 ),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1D4ED8),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                child: ResponsiveContentContainer(
+                  maxWidth: 960,
+                  padding: const EdgeInsets.all(16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1D4ED8),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
-                    ),
-                    onPressed: () => _openAddEditCategoryDialog(allCategories),
-                    icon: const Icon(Icons.add_rounded, size: 20),
-                    label: const Text(
-                      '+ नई श्रेणी जोड़ें (Add Store Category)',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      onPressed: () => _openAddEditCategoryDialog(allCategories),
+                      icon: const Icon(Icons.add_rounded, size: 20),
+                      label: const Text(
+                        '+ नई श्रेणी जोड़ें (Add Store Category)',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                 ),
@@ -644,12 +661,18 @@ class _ProfessionalManageStoreCategoriesPageState
 
           // Edit Action
           IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            padding: const EdgeInsets.all(4),
             icon: const Icon(Icons.edit_outlined, size: 18, color: Color(0xFF64748B)),
             onPressed: () => _openAddEditCategoryDialog(allCategories, cat),
           ),
 
           // Delete Action
           IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            padding: const EdgeInsets.all(4),
             icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFDC2626)),
             onPressed: () => _handleDeleteCategory(cat),
           ),

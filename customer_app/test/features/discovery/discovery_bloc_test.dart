@@ -28,6 +28,8 @@ class MockCustomerDiscoveryRepository implements CustomerDiscoveryRepository {
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
   }) async {
     var list = List<ServiceProviderEntity>.from(providers);
     if (categoryId != null && categoryId != 'all') {
@@ -50,6 +52,8 @@ class MockCustomerDiscoveryRepository implements CustomerDiscoveryRepository {
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
     int limit = 12,
     dynamic lastDocumentCursor,
   }) async {

@@ -36,7 +36,7 @@ dependencies:
   bloc: ^8.1.4
   equatable: ^2.0.7
   google_fonts: ^6.2.1
-  intl: ^0.19.0
+  intl: ^0.20.3
   shared_preferences: ^2.3.5
   uuid: ^4.5.1
 
@@ -63,6 +63,8 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   speech_to_text: ^7.5.0
   package_info_plus: ^8.1.0
+  path_provider: ^2.1.5
+  web: ^1.1.1
 
   # Native Provider App Integration
   apna_jamui_provider:

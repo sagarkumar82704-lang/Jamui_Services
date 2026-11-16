@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:http/http.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import 'provider_category_selection_page.dart';
 
 /// Screen 1: Seller Registration (Email & Password / Owner Details)
@@ -202,12 +202,13 @@ class _ProviderRegisterPageState extends State<ProviderRegisterPage> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+          child: ResponsiveFormShell(
+            maxWidth: 500,
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 const Text(
                   'Create Seller Account',
                   style: TextStyle(
@@ -363,6 +364,7 @@ class _ProviderRegisterPageState extends State<ProviderRegisterPage> {
                   ),
                 ),
               ],
+            ),
             ),
           ),
         ),

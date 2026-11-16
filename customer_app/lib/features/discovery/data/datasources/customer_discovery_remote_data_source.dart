@@ -13,6 +13,8 @@ abstract class CustomerDiscoveryRemoteDataSource {
     double? customerLongitude,
     double? maxRadiusKm,
     String? customerId,
+    String? customerVillage,
+    String? customerBlock,
   });
 
   /// True server/database-level cursor pagination
@@ -24,6 +26,8 @@ abstract class CustomerDiscoveryRemoteDataSource {
     double? customerLongitude,
     double? maxRadiusKm,
     String? customerId,
+    String? customerVillage,
+    String? customerBlock,
     int limit = 12,
     dynamic lastDocumentCursor,
   });

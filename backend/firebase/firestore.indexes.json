@@ -215,6 +215,56 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "products",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isDeleted",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "products",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isDeleted",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "storeCategoryId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "products",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isDeleted",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inStock",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/provider_stats_service.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 
 class AnalyticsPage extends StatefulWidget {
@@ -27,63 +28,108 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
         ),
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
+        automaticallyImplyLeading: false,
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+                onPressed: () => Navigator.pop(context),
+              )
+            : null,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'रियल-टाइम परफॉरमेंस समरी',
-              style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: 12),
+        child: ResponsiveContentContainer(
+          padding: ResponsiveLayout.pagePadding(context),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWideKpi = constraints.maxWidth >= 680;
+              final isTwoColPanels = constraints.maxWidth >= 900;
 
-            // Engagement stats from profile counters
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 1.3,
-              children: [
-                _buildStatTile('कुल प्रोफाइल व्यूज',
-                    '${widget.profile.totalViews}',
-                    Icons.visibility_outlined, AppColors.accent),
-                _buildStatTile('डायरेक्ट फोन कॉल्स',
-                    '${widget.profile.totalCalls}',
-                    Icons.phone_in_talk_outlined, AppColors.info),
-                _buildStatTile('व्हाट्सएप चैट इनक्वायरी',
-                    '${widget.profile.totalWhatsAppClicks}',
-                    Icons.chat_bubble_outline, const Color(0xFF25D366)),
-                _buildStatTile('औसत स्टार रेटिंग',
-                    '${widget.profile.rating} ★',
-                    Icons.star_rounded, AppColors.gold),
-              ],
-            ),
-            const SizedBox(height: 24),
+              final statTiles = [
+                _buildStatTile('कुल प्रोफाइल व्यूज', '${widget.profile.totalViews}', Icons.visibility_outlined, AppColors.accent),
+                _buildStatTile('डायरेक्ट फोन कॉल्स', '${widget.profile.totalCalls}', Icons.phone_in_talk_outlined, AppColors.info),
+                _buildStatTile('व्हाट्सएप चैट इनक्वायरी', '${widget.profile.totalWhatsAppClicks}', Icons.chat_bubble_outline, const Color(0xFF25D366)),
+                _buildStatTile('औसत स्टार रेटिंग', '${widget.profile.rating} ★', Icons.star_rounded, AppColors.gold),
+              ];
 
-            // ML-powered stats from provider_stats collection
-            StreamBuilder<ProviderStats>(
-              stream: ProviderStatsService.statsStream(widget.profile.id),
-              builder: (context, snapshot) {
-                final stats =
-                    snapshot.data ?? ProviderStats.empty(widget.profile.id);
-                return _buildMLStatsSection(stats);
-              },
-            ),
+              final mlSection = StreamBuilder<ProviderStats>(
+                stream: ProviderStatsService.statsStream(widget.profile.id),
+                builder: (context, snapshot) {
+                  final stats = snapshot.data ?? ProviderStats.empty(widget.profile.id);
+                  return _buildMLStatsSection(stats);
+                },
+              );
 
-            const SizedBox(height: 20),
-            _buildInsightsCard(),
-          ],
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'रियल-टाइम परफॉरमेंस समरी',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  if (isWideKpi)
+                    Row(
+                      children: [
+                        Expanded(child: statTiles[0]),
+                        const SizedBox(width: 12),
+                        Expanded(child: statTiles[1]),
+                        const SizedBox(width: 12),
+                        Expanded(child: statTiles[2]),
+                        const SizedBox(width: 12),
+                        Expanded(child: statTiles[3]),
+                      ],
+                    )
+                  else
+                    Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: statTiles[0]),
+                            const SizedBox(width: 10),
+                            Expanded(child: statTiles[1]),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(child: statTiles[2]),
+                            const SizedBox(width: 10),
+                            Expanded(child: statTiles[3]),
+                          ],
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 24),
+
+                  if (isTwoColPanels)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 6, child: mlSection),
+                        const SizedBox(width: 20),
+                        Expanded(
+                          flex: 5,
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 28),
+                            child: _buildInsightsCard(),
+                          ),
+                        ),
+                      ],
+                    )
+                  else ...[
+                    mlSection,
+                    const SizedBox(height: 20),
+                    _buildInsightsCard(),
+                  ],
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -308,15 +354,19 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, color: color, size: 22),
+          const SizedBox(height: 8),
           Text(count,
               style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
                   color: color)),
+          const SizedBox(height: 4),
           Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                   fontSize: 11,
                   color: AppColors.textSecondary,

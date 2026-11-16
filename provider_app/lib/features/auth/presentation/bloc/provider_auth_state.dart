@@ -118,19 +118,6 @@ class ProviderProfileUpdatedSuccessState extends ProviderAuthState {
   List<Object?> get props => [message, profile];
 }
 
-class ProviderOtpSentState extends ProviderAuthState {
-  final String verificationId;
-  final String phoneNumber;
-
-  const ProviderOtpSentState({
-    required this.verificationId,
-    required this.phoneNumber,
-  });
-
-  @override
-  List<Object?> get props => [verificationId, phoneNumber];
-}
-
 class ProviderNotRegisteredErrorState extends ProviderAuthState {
   final String userId;
   final String phoneNumber;
@@ -157,19 +144,6 @@ class ProviderCustomServiceSubmittedSuccessState extends ProviderAuthState {
 
   @override
   List<Object?> get props => [message, application];
-}
-
-class ProviderAccountMigratedSuccessState extends ProviderAuthState {
-  final String message;
-  final ProviderProfileEntity profile;
-
-  const ProviderAccountMigratedSuccessState({
-    required this.message,
-    required this.profile,
-  });
-
-  @override
-  List<Object?> get props => [message, profile];
 }
 
 

@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
+import '../../../../core/utils/responsive_layout.dart';
+import '../../../../core/localization/provider_strings.dart';
+import '../../../../core/localization/language_selection_modal.dart';
 import '../../data/datasources/professional_provider_remote_data_source.dart';
+import '../../domain/entities/seller_stock_movement_entity.dart';
 
 /// Professional Seller Inventory Management Page
-/// Displays 4 stock KPI summary cards, product inventory list with stock badges,
-/// search and filtering, and stock adjustment dialog with safe disabled write state.
+/// Features:
+/// 1. 4 Stock KPI summary cards (Total units, In stock, Low stock with custom thresholds, Out of stock).
+/// 2. Stock Items Tab with search, filter chips, dynamic low-stock alerts, and desktop data table.
+/// 3. Stock Movement History Ledger Tab tracking all inward, outward, order sales, and returns.
+/// 4. Atomic Stock Adjustment BottomSheet with server-side validation.
 class ProfessionalShopInventoryPage extends StatefulWidget {
   final String shopId;
   final ProfessionalProviderRemoteDataSource? dataSource;
@@ -21,6 +28,7 @@ class ProfessionalShopInventoryPage extends StatefulWidget {
 class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventoryPage> {
   late final ProfessionalProviderRemoteDataSource _dataSource;
   late final Stream<List<Map<String, dynamic>>> _productsStream;
+  late final Stream<List<SellerStockMovementEntity>> _movementsStream;
 
   String _selectedFilter = 'All'; // 'All', 'In Stock', 'Low Stock', 'Out of Stock'
   String _searchQuery = '';
@@ -30,208 +38,591 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
     super.initState();
     _dataSource = widget.dataSource ?? ProfessionalProviderRemoteDataSource();
     _productsStream = _dataSource.streamProducts(widget.shopId);
+    _movementsStream = _dataSource.streamStockMovements(widget.shopId, limit: 100);
+  }
+
+  String _formatStock(num? val) {
+    if (val == null) return '0';
+    if (val % 1 == 0) return val.toInt().toString();
+    return val.toStringAsFixed(3).replaceAll(RegExp(r'\.?0+$'), '');
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0.5,
-        title: const Text(
-          'इन्वेंट्री प्रबंधन (Inventory)',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1E293B),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF8F9FA),
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0.5,
+          title: Text(
+            ProviderStrings.inventoryManagement,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1E293B),
+            ),
           ),
-        ),
-      ),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _productsStream,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-            return const Center(
-              child: CircularProgressIndicator(color: Color(0xFF0F766E)),
-            );
-          }
-
-          final allProducts = snapshot.data ?? [];
-
-          // Calculate Inventory Metrics
-          int totalStockUnits = 0;
-          int inStockCount = 0;
-          int lowStockCount = 0;
-          int outOfStockCount = 0;
-
-          for (final p in allProducts) {
-            final qty = (p['stockQuantity'] as num?)?.toInt() ?? 0;
-            final inStock = (p['inStock'] as bool?) ?? true;
-
-            totalStockUnits += qty;
-
-            if (!inStock || qty <= 0) {
-              outOfStockCount++;
-            } else if (qty <= 5) {
-              lowStockCount++;
-              inStockCount++;
-            } else {
-              inStockCount++;
-            }
-          }
-
-          // Apply filters
-          final filtered = allProducts.where((p) {
-            final qty = (p['stockQuantity'] as num?)?.toInt() ?? 0;
-            final inStock = (p['inStock'] as bool?) ?? true;
-
-            if (_selectedFilter == 'In Stock' && (!inStock || qty <= 0)) {
-              return false;
-            }
-            if (_selectedFilter == 'Low Stock' && (!inStock || qty <= 0 || qty > 5)) {
-              return false;
-            }
-            if (_selectedFilter == 'Out of Stock' && (inStock && qty > 0)) {
-              return false;
-            }
-
-            if (_searchQuery.isNotEmpty) {
-              final q = _searchQuery.toLowerCase();
-              final title = (p['titleEnglish'] ?? p['titleHindi'] ?? p['title'] ?? '').toString().toLowerCase();
-              if (!title.contains(q)) return false;
-            }
-            return true;
-          }).toList();
-
-          return Column(
-            children: [
-              // 4 Stock KPI Summary Cards
-              Container(
-                color: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildKpiCard(
-                            title: 'कुल स्टॉक यूनिट्स',
-                            value: '$totalStockUnits',
-                            icon: Icons.inventory_2_rounded,
-                            iconColor: const Color(0xFF1D4ED8),
-                            bgColor: const Color(0xFFEFF6FF),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _buildKpiCard(
-                            title: 'स्टॉक में उपलब्ध',
-                            value: '$inStockCount',
-                            icon: Icons.check_circle_rounded,
-                            iconColor: const Color(0xFF2E7D32),
-                            bgColor: const Color(0xFFE8F5E9),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildKpiCard(
-                            title: 'कम स्टॉक (<= 5)',
-                            value: '$lowStockCount',
-                            icon: Icons.warning_amber_rounded,
-                            iconColor: const Color(0xFFE65100),
-                            bgColor: const Color(0xFFFFF3E0),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _buildKpiCard(
-                            title: 'आउट ऑफ स्टॉक',
-                            value: '$outOfStockCount',
-                            icon: Icons.cancel_rounded,
-                            iconColor: const Color(0xFFC62828),
-                            bgColor: const Color(0xFFFFEBEE),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+          actions: [
+            IconButton(
+              tooltip: ProviderStrings.selectLanguage,
+              icon: const Icon(Icons.language_rounded, color: Color(0xFF0F766E)),
+              onPressed: () => LanguageSelectionModal.show(context),
+            ),
+            const SizedBox(width: 8),
+          ],
+          bottom: TabBar(
+            labelColor: const Color(0xFF0F766E),
+            unselectedLabelColor: const Color(0xFF64748B),
+            indicatorColor: const Color(0xFF0F766E),
+            indicatorWeight: 3,
+            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+            tabs: [
+              Tab(
+                icon: const Icon(Icons.inventory_2_rounded, size: 18),
+                text: ProviderStrings.stockItems,
               ),
-
-              // Filter Tabs
-              Container(
-                color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildFilterChip('सभी (${allProducts.length})', 'All'),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('उपलब्ध ($inStockCount)', 'In Stock'),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('कम स्टॉक ($lowStockCount)', 'Low Stock'),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('आउट ऑफ स्टॉक ($outOfStockCount)', 'Out of Stock'),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Search Bar
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Container(
-                  height: 42,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.search_rounded, color: Colors.grey, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          onChanged: (v) => setState(() => _searchQuery = v),
-                          decoration: const InputDecoration(
-                            hintText: 'इन्वेंट्री में उत्पाद खोजें...',
-                            hintStyle: TextStyle(fontSize: 13, color: Colors.grey),
-                            border: InputBorder.none,
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Products Inventory List
-              Expanded(
-                child: filtered.isEmpty
-                    ? _buildEmptyState()
-                    : ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        itemCount: filtered.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (ctx, i) => _buildInventoryTile(filtered[i]),
-                      ),
+              Tab(
+                icon: const Icon(Icons.history_rounded, size: 18),
+                text: ProviderStrings.movementHistory,
               ),
             ],
-          );
-        },
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            // TAB 1: STOCK ITEMS VIEW
+            _buildStockItemsTab(),
+
+            // TAB 2: STOCK MOVEMENT HISTORY LEDGER
+            _buildStockHistoryTab(),
+          ],
+        ),
       ),
     );
   }
 
+  // ===========================================================================
+  // TAB 1: STOCK ITEMS VIEW
+  // ===========================================================================
+  Widget _buildStockItemsTab() {
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _productsStream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF0F766E)),
+          );
+        }
+
+        final allProducts = snapshot.data ?? [];
+
+        // Calculate Inventory Metrics based on per-product threshold
+        int totalStockUnits = 0;
+        int inStockCount = 0;
+        int lowStockCount = 0;
+        int outOfStockCount = 0;
+
+        for (final p in allProducts) {
+          final qty = (p['stockQuantity'] as num?)?.toInt() ?? 0;
+          final threshold = (p['lowStockThreshold'] as num?)?.toInt() ?? 5;
+          final inStock = (p['inStock'] as bool?) ?? true;
+
+          totalStockUnits += qty;
+
+          if (!inStock || qty <= 0) {
+            outOfStockCount++;
+          } else if (qty <= threshold) {
+            lowStockCount++;
+            inStockCount++;
+          } else {
+            inStockCount++;
+          }
+        }
+
+        // Apply filters
+        final filtered = allProducts.where((p) {
+          final qty = (p['stockQuantity'] as num?)?.toInt() ?? 0;
+          final threshold = (p['lowStockThreshold'] as num?)?.toInt() ?? 5;
+          final inStock = (p['inStock'] as bool?) ?? true;
+
+          if (_selectedFilter == 'In Stock' && (!inStock || qty <= 0)) {
+            return false;
+          }
+          if (_selectedFilter == 'Low Stock' && (!inStock || qty <= 0 || qty > threshold)) {
+            return false;
+          }
+          if (_selectedFilter == 'Out of Stock' && (inStock && qty > 0)) {
+            return false;
+          }
+
+          if (_searchQuery.isNotEmpty) {
+            final q = _searchQuery.toLowerCase();
+            final title = (p['titleEnglish'] ?? p['titleHindi'] ?? p['title'] ?? '').toString().toLowerCase();
+            if (!title.contains(q)) return false;
+          }
+          return true;
+        }).toList();
+
+        return Column(
+          children: [
+            // 4 Stock KPI Summary Cards
+            Container(
+              width: double.infinity,
+              color: Colors.white,
+              child: ResponsiveContentContainer(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: LayoutBuilder(
+                  builder: (context, kpiConstraints) {
+                    final cards = [
+                      _buildKpiCard(
+                        title: 'कुल स्टॉक यूनिट्स',
+                        value: '$totalStockUnits',
+                        icon: Icons.inventory_2_rounded,
+                        iconColor: const Color(0xFF1D4ED8),
+                        bgColor: const Color(0xFFEFF6FF),
+                      ),
+                      _buildKpiCard(
+                        title: 'स्टॉक में उपलब्ध',
+                        value: '$inStockCount',
+                        icon: Icons.check_circle_rounded,
+                        iconColor: const Color(0xFF2E7D32),
+                        bgColor: const Color(0xFFE8F5E9),
+                      ),
+                      _buildKpiCard(
+                        title: 'कम स्टॉक उत्पाद',
+                        value: '$lowStockCount',
+                        icon: Icons.warning_amber_rounded,
+                        iconColor: const Color(0xFFE65100),
+                        bgColor: const Color(0xFFFFF3E0),
+                      ),
+                      _buildKpiCard(
+                        title: 'आउट ऑफ स्टॉक',
+                        value: '$outOfStockCount',
+                        icon: Icons.cancel_rounded,
+                        iconColor: const Color(0xFFC62828),
+                        bgColor: const Color(0xFFFFEBEE),
+                      ),
+                    ];
+                    if (kpiConstraints.maxWidth >= 700) {
+                      return Row(
+                        children: cards
+                            .map((c) => Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                                    child: c,
+                                  ),
+                                ))
+                            .toList(),
+                      );
+                    } else {
+                      return Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(child: cards[0]),
+                              const SizedBox(width: 8),
+                              Expanded(child: cards[1]),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(child: cards[2]),
+                              const SizedBox(width: 8),
+                              Expanded(child: cards[3]),
+                            ],
+                          ),
+                        ],
+                      );
+                    }
+                  },
+                ),
+              ),
+            ),
+
+            // Search Bar & Filters
+            Container(
+              color: Colors.white,
+              child: ResponsiveContentContainer(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Column(
+                  children: [
+                    Container(
+                      height: 42,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.search_rounded, color: Colors.grey, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              onChanged: (v) => setState(() => _searchQuery = v),
+                              decoration: const InputDecoration(
+                                hintText: 'उत्पाद खोजें...',
+                                hintStyle: TextStyle(fontSize: 13, color: Colors.grey),
+                                border: InputBorder.none,
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          if (_searchQuery.isNotEmpty)
+                            GestureDetector(
+                              onTap: () => setState(() => _searchQuery = ''),
+                              child: const Icon(Icons.clear_rounded, size: 18, color: Colors.grey),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildFilterChip('सभी (${allProducts.length})', 'All'),
+                          const SizedBox(width: 8),
+                          _buildFilterChip('उपलब्ध ($inStockCount)', 'In Stock'),
+                          const SizedBox(width: 8),
+                          _buildFilterChip('कम स्टॉक ($lowStockCount)', 'Low Stock'),
+                          const SizedBox(width: 8),
+                          _buildFilterChip('आउट ऑफ स्टॉक ($outOfStockCount)', 'Out of Stock'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Inventory List / Desktop Table
+            Expanded(
+              child: filtered.isEmpty
+                  ? _buildEmptyState()
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isDesktop = constraints.maxWidth >= 960;
+                        if (isDesktop) {
+                          return _buildDesktopInventoryTable(filtered);
+                        }
+                        return SingleChildScrollView(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: ResponsiveContentContainer(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: ResponsiveCardGrid(
+                              tabletColumns: 2,
+                              desktopColumns: 2,
+                              largeDesktopColumns: 3,
+                              children: filtered.map(_buildInventoryTile).toList(),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // TAB 2: STOCK MOVEMENT HISTORY LEDGER
+  // ===========================================================================
+  Widget _buildStockHistoryTab() {
+    return StreamBuilder<List<SellerStockMovementEntity>>(
+      stream: _movementsStream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF0F766E)),
+          );
+        }
+
+        final movements = snapshot.data ?? [];
+
+        if (movements.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.history_toggle_off_rounded, size: 56, color: Colors.grey.shade400),
+                const SizedBox(height: 12),
+                const Text(
+                  'कोई स्टॉक रिकॉर्ड मौजूद नहीं है',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF475569)),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'स्टॉक समायोजन या बिक्री होने पर यहाँ इतिहास दिखेगा।',
+                  style: TextStyle(fontSize: 12.5, color: Colors.grey),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ResponsiveContentContainer(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: ListView.separated(
+            itemCount: movements.length,
+            separatorBuilder: (context, index) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final m = movements[index];
+              return _buildStockMovementCard(m);
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildStockMovementCard(SellerStockMovementEntity m) {
+    Color typeBg;
+    Color typeFg;
+    IconData typeIcon;
+
+    switch (m.movementType) {
+      case 'order_deduction':
+        typeBg = const Color(0xFFFFE4E6);
+        typeFg = const Color(0xFFE11D48);
+        typeIcon = Icons.shopping_bag_outlined;
+        break;
+      case 'order_restoration':
+        typeBg = const Color(0xFFDCFCE7);
+        typeFg = const Color(0xFF16A34A);
+        typeIcon = Icons.replay_rounded;
+        break;
+      case 'initial':
+        typeBg = const Color(0xFFEFF6FF);
+        typeFg = const Color(0xFF2563EB);
+        typeIcon = Icons.flag_rounded;
+        break;
+      case 'manual_inward':
+        typeBg = const Color(0xFFDCFCE7);
+        typeFg = const Color(0xFF16A34A);
+        typeIcon = Icons.arrow_downward_rounded;
+        break;
+      case 'manual_outward':
+        typeBg = const Color(0xFFFFF7ED);
+        typeFg = const Color(0xFFEA580C);
+        typeIcon = Icons.arrow_upward_rounded;
+        break;
+      default:
+        typeBg = const Color(0xFFF1F5F9);
+        typeFg = const Color(0xFF475569);
+        typeIcon = Icons.tune_rounded;
+    }
+
+    final dateStr = '${m.createdAt.day.toString().padLeft(2, '0')}/${m.createdAt.month.toString().padLeft(2, '0')}/${m.createdAt.year} ${m.createdAt.hour.toString().padLeft(2, '0')}:${m.createdAt.minute.toString().padLeft(2, '0')}';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 4, offset: const Offset(0, 1)),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: typeBg,
+            child: Icon(typeIcon, color: typeFg, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        m.productName,
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      m.formattedChange,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: m.isInward ? const Color(0xFF16A34A) : const Color(0xFFE11D48),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: typeBg, borderRadius: BorderRadius.circular(4)),
+                      child: Text(
+                        m.movementTypeDisplayHindi,
+                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: typeFg),
+                      ),
+                    ),
+                    if (m.orderNumber != null)
+                      Text(
+                        '#${m.orderNumber}',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8)),
+                      ),
+                    Text(
+                      '${m.previousStock} → ${m.newStock} इकाई',
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+                if (m.reason.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Text(
+                    m.reason,
+                    style: const TextStyle(fontSize: 11.5, color: Color(0xFF475569)),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Text(
+                  dateStr,
+                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // DESKTOP INVENTORY DATA TABLE
+  // ===========================================================================
+  Widget _buildDesktopInventoryTable(List<Map<String, dynamic>> items) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: ResponsiveContentContainer(
+        padding: EdgeInsets.zero,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                  child: DataTable(
+                    columnSpacing: 20,
+                    horizontalMargin: 16,
+                    headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+                    columns: const [
+                      DataColumn(label: Text('उत्पाद (Product)', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('श्रेणी (Category)', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('मूल्य (Selling Price)', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('वर्तमान स्टॉक (Stock)', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('स्थिति (Status)', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('कार्रवाई (Action)', style: TextStyle(fontWeight: FontWeight.bold))),
+                    ],
+                    rows: items.map((product) {
+                      final title = product['titleEnglish'] ?? product['titleHindi'] ?? product['title'] ?? 'Product';
+                      final category = product['storeCategoryName'] ?? product['categoryName'] ?? 'General';
+                      final price = product['sellingPrice'] ?? product['price'] ?? 0;
+                      final qty = (product['stockQuantity'] as num?)?.toDouble() ?? 0.0;
+                      final threshold = (product['lowStockThreshold'] as num?)?.toDouble() ?? 5.0;
+                      final unit = product['unit'] ?? 'इकाई';
+                      final inStock = (product['inStock'] as bool?) ?? true;
+
+                      Color statusBg;
+                      Color statusFg;
+                      String statusText;
+
+                      if (!inStock || qty <= 0) {
+                        statusBg = const Color(0xFFFFEBEE);
+                        statusFg = const Color(0xFFC62828);
+                        statusText = 'आउट ऑफ स्टॉक';
+                      } else if (qty <= threshold) {
+                        statusBg = const Color(0xFFFFF3E0);
+                        statusFg = const Color(0xFFE65100);
+                        statusText = 'कम स्टॉक (<= ${_formatStock(threshold)})';
+                      } else {
+                        statusBg = const Color(0xFFE8F5E9);
+                        statusFg = const Color(0xFF2E7D32);
+                        statusText = 'उपलब्ध';
+                      }
+
+                      return DataRow(
+                        cells: [
+                          DataCell(
+                            Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                          ),
+                          DataCell(Text(category, style: const TextStyle(fontSize: 12.5))),
+                          DataCell(Text('₹$price / $unit', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF0F766E)))),
+                          DataCell(
+                            Text(
+                              '${_formatStock(qty)} $unit',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: qty <= threshold ? Colors.red.shade700 : const Color(0xFF1E293B),
+                              ),
+                            ),
+                          ),
+                          DataCell(
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(color: statusBg, borderRadius: BorderRadius.circular(6)),
+                              child: Text(statusText, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: statusFg)),
+                            ),
+                          ),
+                          DataCell(
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0F766E),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                minimumSize: const Size(0, 32),
+                              ),
+                              icon: const Icon(Icons.edit_rounded, size: 14),
+                              label: const Text('स्टॉक बदलें', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                              onPressed: () => _showStockAdjustmentDialog(product),
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // WIDGET HELPERS
+  // ===========================================================================
   Widget _buildKpiCard({
     required String title,
     required String value,
@@ -308,10 +699,10 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
 
   Widget _buildInventoryTile(Map<String, dynamic> product) {
     final title = product['titleEnglish'] ?? product['titleHindi'] ?? product['title'] ?? 'Product';
-    final qty = (product['stockQuantity'] as num?)?.toInt() ?? 0;
+    final qty = (product['stockQuantity'] as num?)?.toDouble() ?? 0.0;
+    final threshold = (product['lowStockThreshold'] as num?)?.toDouble() ?? 5.0;
     final unit = (product['unit'] as String?) ?? 'इकाई';
     final inStock = (product['inStock'] as bool?) ?? true;
-    final thumb = (product['thumbnailUrl'] as String?) ?? '';
 
     Color badgeBg;
     Color badgeFg;
@@ -321,58 +712,35 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
       badgeBg = const Color(0xFFFFEBEE);
       badgeFg = const Color(0xFFC62828);
       badgeText = 'आउट ऑफ स्टॉक (0)';
-    } else if (qty <= 5) {
+    } else if (qty <= threshold) {
       badgeBg = const Color(0xFFFFF3E0);
       badgeFg = const Color(0xFFE65100);
-      badgeText = 'कम स्टॉक ($qty $unit)';
+      badgeText = 'कम स्टॉक (${_formatStock(qty)} $unit)';
     } else {
       badgeBg = const Color(0xFFE8F5E9);
       badgeFg = const Color(0xFF2E7D32);
-      badgeText = 'स्टॉक में ($qty $unit)';
+      badgeText = 'उपलब्ध (${_formatStock(qty)} $unit)';
     }
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 4, offset: const Offset(0, 1)),
         ],
       ),
       child: Row(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              width: 50,
-              height: 50,
-              color: const Color(0xFFF1F5F9),
-              child: thumb.isNotEmpty
-                  ? Image.network(
-                      thumb,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => const Icon(Icons.inventory_2_outlined, color: Colors.grey),
-                    )
-                  : const Icon(Icons.inventory_2_outlined, color: Colors.grey),
-            ),
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
-                  ),
+                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                 ),
                 const SizedBox(height: 4),
                 Container(
@@ -393,65 +761,89 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
               ],
             ),
           ),
-          OutlinedButton.icon(
-            onPressed: () => _showAdjustmentDialog(product),
-            icon: const Icon(Icons.tune_rounded, size: 16, color: Color(0xFF0F766E)),
-            label: const Text(
-              'समायोजित करें',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F766E)),
-            ),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Color(0xFF0F766E)),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0F766E),
+              foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              minimumSize: const Size(0, 34),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
+            onPressed: () => _showStockAdjustmentDialog(product),
+            child: const Text('स्टॉक बदलें', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
     );
   }
 
-  void _showAdjustmentDialog(Map<String, dynamic> product) {
-    final productId = (product['id'] as String?) ?? '';
-    final title = product['titleEnglish'] ?? product['titleHindi'] ?? product['title'] ?? 'Product';
-    final currentQty = (product['stockQuantity'] as num?)?.toInt() ?? 0;
-    final unit = (product['unit'] as String?) ?? 'इकाई';
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.inventory_2_outlined, size: 56, color: Colors.grey.shade400),
+          const SizedBox(height: 12),
+          const Text(
+            'कोई उत्पाद नहीं मिला',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF475569)),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'खोज शब्द बदलें या नया उत्पाद जोड़ें।',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
 
-    String operation = 'increment'; // 'increment', 'decrement', 'set'
+  // ===========================================================================
+  // STOCK ADJUSTMENT BOTTOM SHEET
+  // ===========================================================================
+  void _showStockAdjustmentDialog(Map<String, dynamic> product) {
+    final productId = product['id'] ?? '';
+    final title = product['titleEnglish'] ?? product['titleHindi'] ?? product['title'] ?? 'Product';
+    final currentQty = (product['stockQuantity'] as num?)?.toDouble() ?? 0.0;
+    final isBulk = product['stockType'] == 'bulk';
+    final unit = product['unit'] ?? 'इकाई';
+
     final amountController = TextEditingController();
     final reasonController = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
+    String operation = 'increment'; // 'increment', 'decrement', 'set'
+    bool isSubmitting = false;
+    String? errorMessage;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        bool isSubmitting = false;
-        String? errorMessage;
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          num? projectedStock;
+          final inputAmount = isBulk
+              ? double.tryParse(amountController.text.trim())
+              : int.tryParse(amountController.text.trim())?.toDouble();
+          if (inputAmount != null && inputAmount >= 0) {
+            if (operation == 'increment') projectedStock = currentQty + inputAmount;
+            if (operation == 'decrement') projectedStock = currentQty - inputAmount;
+            if (operation == 'set') projectedStock = inputAmount;
+          }
 
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final enteredAmount = int.tryParse(amountController.text.trim()) ?? 0;
-            int? projectedStock;
-            if (operation == 'increment') {
-              projectedStock = currentQty + enteredAmount;
-            } else if (operation == 'decrement') {
-              projectedStock = currentQty - enteredAmount;
-            } else if (operation == 'set') {
-              projectedStock = enteredAmount;
-            }
-
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-                left: 20,
-                right: 20,
-                top: 20,
-              ),
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+            ),
+            child: SingleChildScrollView(
               child: Form(
                 key: formKey,
                 child: Column(
@@ -459,16 +851,11 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Expanded(
                           child: Text(
                             'स्टॉक समायोजन: $title',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1E293B),
-                            ),
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                           ),
                         ),
                         IconButton(
@@ -478,43 +865,33 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF1F5F9),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                          decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(8)),
                           child: Text(
-                            'वर्तमान स्टॉक: $currentQty $unit',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF334155),
-                              fontWeight: FontWeight.bold,
-                            ),
+                            'वर्तमान: ${_formatStock(currentQty)} $unit',
+                            style: const TextStyle(fontSize: 13, color: Color(0xFF334155), fontWeight: FontWeight.bold),
                           ),
                         ),
-                        if (projectedStock != null && amountController.text.trim().isNotEmpty) ...[
-                          const SizedBox(width: 8),
+                        if (projectedStock != null) ...[
                           const Icon(Icons.arrow_forward_rounded, size: 16, color: Color(0xFF64748B)),
-                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
-                              color: (projectedStock < 0)
-                                  ? const Color(0xFFFFEBEE)
-                                  : const Color(0xFFE8F5E9),
+                              color: (projectedStock < 0) ? const Color(0xFFFFEBEE) : const Color(0xFFE8F5E9),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
-                              'नया: $projectedStock $unit',
+                              'नया: ${_formatStock(projectedStock)} $unit',
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
-                                color: (projectedStock < 0)
-                                    ? const Color(0xFFC62828)
-                                    : const Color(0xFF2E7D32),
+                                color: (projectedStock < 0) ? const Color(0xFFC62828) : const Color(0xFF2E7D32),
                               ),
                             ),
                           ),
@@ -523,12 +900,7 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
                     ),
                     const SizedBox(height: 16),
 
-                    // Operation Selector
-                    const Text(
-                      'समायोजन प्रकार (Operation):',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
-                    ),
-                    const SizedBox(height: 8),
+                    // Operation Chips
                     Row(
                       children: [
                         Expanded(
@@ -540,11 +912,7 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
                               fontWeight: FontWeight.bold,
                               color: operation == 'increment' ? const Color(0xFF16A34A) : const Color(0xFF64748B),
                             ),
-                            onSelected: isSubmitting
-                                ? null
-                                : (selected) {
-                                    if (selected) setModalState(() => operation = 'increment');
-                                  },
+                            onSelected: isSubmitting ? null : (_) => setModalState(() => operation = 'increment'),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -557,11 +925,7 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
                               fontWeight: FontWeight.bold,
                               color: operation == 'decrement' ? const Color(0xFFE11D48) : const Color(0xFF64748B),
                             ),
-                            onSelected: isSubmitting
-                                ? null
-                                : (selected) {
-                                    if (selected) setModalState(() => operation = 'decrement');
-                                  },
+                            onSelected: isSubmitting ? null : (_) => setModalState(() => operation = 'decrement'),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -574,63 +938,53 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
                               fontWeight: FontWeight.bold,
                               color: operation == 'set' ? const Color(0xFF2563EB) : const Color(0xFF64748B),
                             ),
-                            onSelected: isSubmitting
-                                ? null
-                                : (selected) {
-                                    if (selected) setModalState(() => operation = 'set');
-                                  },
+                            onSelected: isSubmitting ? null : (_) => setModalState(() => operation = 'set'),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 14),
 
-                    // Amount Input
                     TextFormField(
                       controller: amountController,
-                      keyboardType: TextInputType.number,
+                      keyboardType: isBulk
+                          ? const TextInputType.numberWithOptions(decimal: true)
+                          : TextInputType.number,
                       enabled: !isSubmitting,
                       onChanged: (_) => setModalState(() {}),
                       decoration: InputDecoration(
                         labelText: operation == 'set'
                             ? 'नया कुल स्टॉक (Exact Stock Count) *'
                             : 'मात्रा दर्ज करें (Amount to ${operation == 'increment' ? 'Add' : 'Deduct'}) *',
-                        hintText: 'उदा. 10',
+                        hintText: isBulk ? 'उदा. 10.5 या 0.5' : 'उदा. 10',
                         filled: true,
                         fillColor: const Color(0xFFF8FAFC),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade300)),
                       ),
                       validator: (val) {
-                        if (val == null || val.trim().isEmpty) {
-                          return 'कृपया मात्रा दर्ज करें';
-                        }
-                        final parsed = int.tryParse(val.trim());
-                        if (parsed == null) {
-                          return 'कृपया केवल वैध पूर्णांक संख्या दर्ज करें';
-                        }
-                        if (operation == 'set' && parsed < 0) {
-                          return 'स्टॉक 0 या 0 से अधिक होना चाहिए';
-                        }
-                        if (operation != 'set' && parsed <= 0) {
-                          return 'मात्रा 0 से अधिक होनी चाहिए';
+                        if (val == null || val.trim().isEmpty) return 'कृपया मात्रा दर्ज करें';
+                        final parsed = double.tryParse(val.trim());
+                        if (parsed == null) return 'कृपया वैध संख्या दर्ज करें';
+                        if (parsed < 0) return 'मात्रा नकारात्मक नहीं हो सकती';
+                        if (operation != 'set' && parsed <= 0) return 'मात्रा 0 से अधिक होनी चाहिए';
+                        if (!isBulk && parsed % 1 != 0) return 'पैकेट या पीस वस्तुओं के लिए पूर्ण संख्या दर्ज करें';
+                        final decParts = val.trim().split('.');
+                        if (decParts.length > 1 && decParts[1].length > 3) {
+                          return 'अधिकतम 3 दशमलव अंक मान्य हैं (उदा. 0.250)';
                         }
                         if (operation == 'decrement' && parsed > currentQty) {
-                          return 'घटाने की मात्रा वर्तमान स्टॉक ($currentQty) से अधिक नहीं हो सकती';
+                          return 'घटाने की मात्रा वर्तमान स्टॉक (${_formatStock(currentQty)}) से अधिक नहीं हो सकती';
                         }
                         return null;
                       },
                     ),
                     const SizedBox(height: 12),
 
-                    // Reason Input (Optional)
                     TextFormField(
                       controller: reasonController,
                       enabled: !isSubmitting,
                       decoration: InputDecoration(
-                        labelText: 'समायोजन का कारण (वैकल्पिक / Optional Reason)',
+                        labelText: 'समायोजन का कारण (Reason)',
                         hintText: operation == 'increment'
                             ? 'उदा. नया माल प्राप्त हुआ (New stock arrived)'
                             : operation == 'decrement'
@@ -638,15 +992,11 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
                                 : 'उदा. भौतिक सत्यापन (Physical stock audit)',
                         filled: true,
                         fillColor: const Color(0xFFF8FAFC),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade300)),
                       ),
                     ),
                     const SizedBox(height: 14),
 
-                    // Error Message Banner
                     if (errorMessage != null) ...[
                       Container(
                         padding: const EdgeInsets.all(10),
@@ -655,81 +1005,33 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: Colors.red.shade200),
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.error_outline_rounded, color: Colors.red, size: 18),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                errorMessage!,
-                                style: const TextStyle(fontSize: 12.5, color: Color(0xFFC62828)),
-                              ),
-                            ),
-                          ],
-                        ),
+                        child: Text(errorMessage!, style: const TextStyle(fontSize: 12.5, color: Color(0xFFC62828))),
                       ),
                       const SizedBox(height: 14),
                     ],
 
-                    // Submit Action Button
                     SizedBox(
                       width: double.infinity,
-                      height: 48,
+                      height: 46,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF0F766E),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                         onPressed: isSubmitting
                             ? null
                             : () async {
+                                final nav = Navigator.of(ctx);
+                                final messenger = ScaffoldMessenger.of(context);
                                 if (!formKey.currentState!.validate()) return;
-                                final amount = int.parse(amountController.text.trim());
-
-                                // Confirmation for Set and Decrement
-                                if (operation == 'decrement' || operation == 'set') {
-                                  final confirmed = await showDialog<bool>(
-                                    context: context,
-                                    builder: (confirmCtx) => AlertDialog(
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(16),
-                                      ),
-                                      title: const Text('स्टॉक पुष्टि (Confirm Stock)'),
-                                      content: Text(
-                                        operation == 'decrement'
-                                            ? 'क्या आप वाकई "$title" से $amount $unit स्टॉक घटाना चाहते हैं?'
-                                            : 'क्या आप वाकई "$title" का कुल स्टॉक $amount $unit पर सेट करना चाहते हैं?',
-                                        style: const TextStyle(fontSize: 13.5, color: Color(0xFF334155)),
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () => Navigator.pop(confirmCtx, false),
-                                          child: const Text('रद्द करें'),
-                                        ),
-                                        ElevatedButton(
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: const Color(0xFF0F766E),
-                                          ),
-                                          onPressed: () => Navigator.pop(confirmCtx, true),
-                                          child: const Text('पुष्टि करें', style: TextStyle(color: Colors.white)),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-
-                                  if (confirmed != true) return;
-                                }
+                                final num amount = isBulk
+                                    ? double.parse(amountController.text.trim())
+                                    : int.parse(amountController.text.trim());
 
                                 setModalState(() {
                                   isSubmitting = true;
                                   errorMessage = null;
                                 });
-
-                                final nav = Navigator.of(ctx);
-                                final messenger = ScaffoldMessenger.of(context);
 
                                 try {
                                   final result = await _dataSource.adjustProductStock(
@@ -742,62 +1044,38 @@ class _ProfessionalShopInventoryPageState extends State<ProfessionalShopInventor
 
                                   if (mounted) {
                                     nav.pop();
-                                    final finalStock = result['newStock'] ?? amount;
+                                    final finalStock = result['newStock'] != null
+                                        ? _formatStock(result['newStock'] as num?)
+                                        : _formatStock(amount);
                                     messenger.showSnackBar(
                                       SnackBar(
-                                        content: Text(
-                                          'स्टॉक सफलतापूर्वक अपडेट किया गया! नया स्टॉक: $finalStock $unit',
-                                        ),
+                                        content: Text('✓ स्टॉक सफलतापूर्वक $finalStock $unit पर अपडेट हो गया और लेजर में दर्ज हुआ!'),
                                         backgroundColor: const Color(0xFF16A34A),
                                       ),
                                     );
                                   }
                                 } catch (err) {
-                                  if (mounted) {
-                                    setModalState(() {
-                                      isSubmitting = false;
-                                      errorMessage = err.toString().replaceAll('Exception: ', '');
-                                    });
-                                  }
+                                  setModalState(() {
+                                    isSubmitting = false;
+                                    errorMessage = err.toString().replaceAll('Exception:', '').trim();
+                                  });
                                 }
                               },
                         child: isSubmitting
                             ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2.2,
-                                ),
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                               )
-                            : const Text(
-                                'स्टॉक अपडेट करें (Submit Stock)',
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                              ),
+                            : const Text('स्टॉक सहेजें (Save Stock)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
                       ),
                     ),
                   ],
                 ),
               ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.inventory_2_outlined, size: 54, color: Colors.grey.shade400),
-          const SizedBox(height: 12),
-          const Text(
-            'कोई उत्पाद नहीं मिला',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF475569)),
-          ),
-        ],
+            ),
+          );
+        },
       ),
     );
   }

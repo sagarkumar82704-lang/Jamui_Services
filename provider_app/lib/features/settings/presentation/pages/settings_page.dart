@@ -5,7 +5,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/localization/provider_locale_controller.dart';
+import '../../../../core/localization/provider_strings.dart';
 import '../../../../core/utils/app_image_utils.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 import '../../../auth/presentation/bloc/provider_auth_bloc.dart';
 import '../../../auth/presentation/bloc/provider_auth_event.dart';
@@ -92,10 +95,15 @@ class SettingsPage extends StatelessWidget {
           },
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // Profile Summary Card
+      body: SingleChildScrollView(
+        padding: EdgeInsets.zero,
+        child: ResponsiveContentContainer(
+          maxWidth: 860,
+          padding: ResponsiveLayout.pagePadding(context),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Profile Summary Card
           InkWell(
             onTap: () {
               Navigator.push(
@@ -212,16 +220,19 @@ class SettingsPage extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            Text(
-                              profile.isUnisexSalon
-                                  ? 'Unisex Salon Profile'
-                                  : (profile.resolvedCategoryTitle.isNotEmpty
-                                      ? '${profile.resolvedCategoryTitle} प्रोफाइल'
-                                      : 'Business Profile'),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14.5,
+                            Flexible(
+                              child: Text(
+                                profile.isUnisexSalon
+                                    ? 'Unisex Salon Profile'
+                                    : (profile.resolvedCategoryTitle.isNotEmpty
+                                        ? '${profile.resolvedCategoryTitle} प्रोफाइल'
+                                        : 'Business Profile'),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14.5,
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             if (profile.isPremiumApprovedAndLive) ...[
@@ -269,7 +280,31 @@ class SettingsPage extends StatelessWidget {
           ),
           const SizedBox(height: 20),
 
-          _buildSectionTitle('व्यवसाय व प्रोफाइल प्रबन्धन'),
+          _buildSectionTitle(ProviderStrings.appPreferences),
+          _buildSettingsItem(
+            icon: Icons.translate_rounded,
+            title: ProviderStrings.languageSettingTitle,
+            subtitle: ProviderLocaleController.instance.isHindi ? 'हिन्दी (Hindi)' : 'English',
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                ProviderLocaleController.instance.isHindi ? 'हिन्दी' : 'English',
+                style: const TextStyle(
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            onTap: () => _showLanguageBottomSheet(context),
+          ),
+          const SizedBox(height: 12),
+
+          _buildSectionTitle(ProviderStrings.businessAndProfileManagement),
           _buildSettingsItem(
             icon: Icons.storefront_rounded,
             title: 'बिजनेस प्रोफाइल (Business Profile)',
@@ -310,11 +345,11 @@ class SettingsPage extends StatelessWidget {
           ),
           const SizedBox(height: 12),
 
-          _buildSectionTitle('खाता सुरक्षा व गोपनीयता'),
+          _buildSectionTitle(ProviderStrings.accountSecurity),
           _buildSettingsItem(
             icon: Icons.lock_outline,
-            title: 'पासवर्ड बदलें',
-            subtitle: 'ईमेल रीसेट लिंक भेजें',
+            title: ProviderStrings.changePassword,
+            subtitle: ProviderStrings.changePasswordSubtitle,
             onTap: () {
               if (profile.email.isNotEmpty) {
                 context.read<ProviderAuthBloc>().add(SendPasswordResetEvent(profile.email));
@@ -330,17 +365,17 @@ class SettingsPage extends StatelessWidget {
           ),
           _buildSettingsItem(
             icon: Icons.privacy_tip_outlined,
-            title: 'गोपनीयता नीति (Privacy Policy)',
-            subtitle: 'डेटा सुरक्षा और उपयोग शर्तें पढ़ें',
+            title: ProviderStrings.privacyPolicy,
+            subtitle: ProviderStrings.privacyPolicySubtitle,
             onTap: () => _openWebUrl('https://jamui-services.web.app/#provider-policy'),
           ),
 
           const SizedBox(height: 16),
-          _buildSectionTitle('ऐप सहायता व शर्तें'),
+          _buildSectionTitle(ProviderStrings.appHelpAndTerms),
           _buildSettingsItem(
             icon: Icons.help_outline,
-            title: 'नियम व शर्तें (Terms & Conditions)',
-            subtitle: 'JAMUI SERVICE पार्टनर सर्विस एग्रीमेंट',
+            title: ProviderStrings.termsAndConditions,
+            subtitle: ProviderStrings.termsSubtitle,
             onTap: () => _openWebUrl('https://jamui-services.web.app/#terms'),
           ),
 
@@ -348,7 +383,7 @@ class SettingsPage extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: () => _handleSignOut(context),
             icon: const Icon(Icons.logout, color: AppColors.error),
-            label: const Text('साइन आउट करें (Sign Out)', style: TextStyle(color: AppColors.error, fontWeight: FontWeight.bold)),
+            label: Text(ProviderStrings.signOut, style: const TextStyle(color: AppColors.error, fontWeight: FontWeight.bold)),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 14),
               side: const BorderSide(color: AppColors.error),
@@ -368,7 +403,9 @@ class SettingsPage extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 10),
             ),
           ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -494,6 +531,7 @@ class SettingsPage extends StatelessWidget {
     required String title,
     required String subtitle,
     required VoidCallback onTap,
+    Widget? trailing,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -508,8 +546,138 @@ class SettingsPage extends StatelessWidget {
           leading: Icon(icon, color: AppColors.primary),
           title: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
           subtitle: Text(subtitle, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-          trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
+          trailing: trailing ?? const Icon(Icons.chevron_right, color: AppColors.textMuted),
           onTap: onTap,
+        ),
+      ),
+    );
+  }
+
+  void _showLanguageBottomSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  ProviderStrings.selectLanguage,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildLanguageOption(
+                  context: ctx,
+                  code: 'hi',
+                  title: 'हिन्दी',
+                  subtitle: 'Hindi',
+                  isSelected: ProviderLocaleController.instance.isHindi,
+                ),
+                const SizedBox(height: 10),
+                _buildLanguageOption(
+                  context: ctx,
+                  code: 'en',
+                  title: 'English',
+                  subtitle: 'English',
+                  isSelected: ProviderLocaleController.instance.isEnglish,
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLanguageOption({
+    required BuildContext context,
+    required String code,
+    required String title,
+    required String subtitle,
+    required bool isSelected,
+  }) {
+    return InkWell(
+      key: Key('lang_option_$code'),
+      onTap: () async {
+        await ProviderLocaleController.instance.setLocale(code);
+        if (context.mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(ProviderStrings.languageSwitched),
+              backgroundColor: AppColors.primary,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary.withValues(alpha: 0.08) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : AppColors.border,
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+              color: isSelected ? AppColors.primary : Colors.grey,
+              size: 22,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                      color: isSelected ? AppColors.primary : const Color(0xFF1E293B),
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isSelected ? AppColors.primary.withValues(alpha: 0.8) : AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Icon(Icons.check_circle_rounded, color: AppColors.primary, size: 20),
+          ],
         ),
       ),
     );

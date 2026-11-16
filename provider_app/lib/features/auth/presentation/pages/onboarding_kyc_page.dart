@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/image_compression_helper.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../categories/data/datasources/firebase_category_remote_data_source.dart';
 import '../../../categories/data/repositories/category_repository_impl.dart';
 import '../../../categories/domain/entities/service_category.dart';
@@ -273,7 +274,9 @@ class _OnboardingKycPageState extends State<OnboardingKycPage> {
               return const Center(child: CircularProgressIndicator(color: AppColors.accent));
             }
 
-            return Stepper(
+            return ResponsiveContentContainer(
+              maxWidth: 780,
+              child: Stepper(
               type: StepperType.vertical,
               currentStep: _currentStep,
               onStepTapped: (step) => setState(() => _currentStep = step),
@@ -296,7 +299,9 @@ class _OnboardingKycPageState extends State<OnboardingKycPage> {
               controlsBuilder: (context, details) {
                 return Padding(
                   padding: const EdgeInsets.only(top: 16),
-                  child: Row(
+                  child: Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
                     children: [
                       ElevatedButton(
                         onPressed: details.onStepContinue,
@@ -308,7 +313,6 @@ class _OnboardingKycPageState extends State<OnboardingKycPage> {
                         ),
                         child: Text(_currentStep == 2 ? 'सत्यापन के लिए सबमिट करें' : 'आगे बढ़ें'),
                       ),
-                      const SizedBox(width: 12),
                       if (_currentStep > 0)
                         OutlinedButton(
                           onPressed: details.onStepCancel,
@@ -732,32 +736,37 @@ class _OnboardingKycPageState extends State<OnboardingKycPage> {
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFEA4335).withValues(alpha: 0.1),
-                                          shape: BoxShape.circle,
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(6),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFEA4335).withValues(alpha: 0.1),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(Icons.location_on, color: Color(0xFFEA4335), size: 20),
                                         ),
-                                        child: const Icon(Icons.location_on, color: Color(0xFFEA4335), size: 20),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      const Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'सर्विस लोकेशन (Google Maps)',
-                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
+                                        const SizedBox(width: 8),
+                                        const Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'सर्विस लोकेशन (Google Maps)',
+                                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
+                                              ),
+                                              Text(
+                                                'ग्राहक आपको इसी लोकेशन से खोजेंगे',
+                                                style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                                              ),
+                                            ],
                                           ),
-                                          Text(
-                                            'ग्राहक आपको इसी लोकेशन से खोजेंगे',
-                                            style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                        ),
+                                      ],
+                                    ),
                                   ),
+                                  const SizedBox(width: 8),
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                     decoration: BoxDecoration(
@@ -991,10 +1000,13 @@ class _OnboardingKycPageState extends State<OnboardingKycPage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text(
-                                  'सर्विस दायरा (Service Radius):',
-                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                                const Expanded(
+                                  child: Text(
+                                    'सर्विस दायरा (Service Radius):',
+                                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                                  ),
                                 ),
+                                const SizedBox(width: 8),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                                   decoration: BoxDecoration(
@@ -1074,9 +1086,11 @@ class _OnboardingKycPageState extends State<OnboardingKycPage> {
                               children: [
                                 Icon(Icons.storefront_outlined, color: AppColors.accent, size: 20),
                                 SizedBox(width: 8),
-                                Text(
-                                  'दुकान / कार्यक्षेत्र की फोटो (Workplace Photo)',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
+                                Expanded(
+                                  child: Text(
+                                    'दुकान / कार्यक्षेत्र की फोटो (Workplace Photo)',
+                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
+                                  ),
                                 ),
                               ],
                             ),
@@ -1307,6 +1321,7 @@ class _OnboardingKycPageState extends State<OnboardingKycPage> {
                   ),
                 ),
               ],
+            ),
             );
           },
         ),

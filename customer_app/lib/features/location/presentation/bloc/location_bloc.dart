@@ -15,6 +15,7 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
   // Monotonic sequence guards to prevent stale responses from overwriting newer user selections
   int _selectionSeq = 0;
   int _gpsSeq = 0;
+  int _searchSeq = 0;
 
   LocationBloc({required this.locationRepository}) : super(const LocationInitial()) {
     on<LoadSavedLocationEvent>(_onLoadSavedLocation);
@@ -48,7 +49,7 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
           isGpsLocked: false,
           cameraLatitude: cached.latitude,
           cameraLongitude: cached.longitude,
-          zoom: 16.0,
+          zoom: 14.3,
           isConfirmed: true,
         ));
         // If cached location is older than max age, fetch fresh device GPS in background
@@ -72,6 +73,8 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
   ) async {
     _debounceGeocodeTimer?.cancel();
     _selectionSeq++; // Invalidate pending reverse geocodes
+    _gpsSeq++; // Invalidate pending GPS requests
+    _searchSeq++; // Invalidate pending search requests
     emit(LocationLoaded(
       location: event.location,
       isGpsLocked: false,
@@ -81,6 +84,8 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
       isConfirmed: false,
       searchResults: const [],
       isSearching: false,
+      searchQuery: '',
+      hasSearched: false,
     ));
   }
 
@@ -105,31 +110,88 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
   ) async {
     final query = event.query.trim();
     if (query.isEmpty) {
+      _searchSeq++;
       if (state is LocationLoaded) {
         final current = state as LocationLoaded;
-        emit(current.copyWith(searchResults: [], isSearching: false));
+        emit(current.copyWith(
+          searchResults: const [],
+          isSearching: false,
+          searchQuery: '',
+          hasSearched: false,
+          clearSearchError: true,
+        ));
       }
       return;
     }
 
+    final mySearchSeq = ++_searchSeq;
+    // Prevent slow background GPS acquisition from wiping out active search results
+    _gpsSeq++;
+
+    final LocationLoaded baseState;
     if (state is LocationLoaded) {
-      final current = state as LocationLoaded;
-      emit(current.copyWith(isSearching: true));
+      baseState = state as LocationLoaded;
+    } else {
+      final initLat = (event.customerLat != null && event.customerLat != 0.0) ? event.customerLat! : 0.0;
+      final initLng = (event.customerLng != null && event.customerLng != 0.0) ? event.customerLng! : 0.0;
+      baseState = LocationLoaded(
+        location: CustomerLocationEntity(
+          latitude: initLat,
+          longitude: initLng,
+          placeName: 'Select Location',
+          formattedAddress: 'Tap or drag the pin to select your location',
+          city: '',
+          district: '',
+          state: '',
+          pincode: '',
+          timestamp: DateTime.now(),
+        ),
+        isGpsLocked: false,
+        cameraLatitude: initLat != 0.0 ? initLat : 24.9213,
+        cameraLongitude: initLng != 0.0 ? initLng : 86.2238,
+        zoom: initLat != 0.0 ? 16.0 : 13.5,
+        isConfirmed: false,
+      );
+    }
 
-      final biasLat = event.customerLat ?? current.location.latitude;
-      final biasLng = event.customerLng ?? current.location.longitude;
+    emit(baseState.copyWith(
+      isSearching: true,
+      searchQuery: query,
+      hasSearched: false,
+      clearSearchError: true,
+    ));
 
-      try {
-        final results = await locationRepository.searchPlaces(
-          query,
-          customerLat: biasLat,
-          customerLng: biasLng,
-        );
-        emit(current.copyWith(searchResults: results, isSearching: false));
-      } catch (e) {
-        debugPrint('⚠️ [LocationBloc] Search failed: $e');
-        emit(current.copyWith(searchResults: [], isSearching: false));
-      }
+    final rawLat = event.customerLat ?? baseState.location.latitude;
+    final rawLng = event.customerLng ?? baseState.location.longitude;
+    final double? biasLat = (rawLat != 0.0 || rawLng != 0.0) ? rawLat : null;
+    final double? biasLng = (rawLat != 0.0 || rawLng != 0.0) ? rawLng : null;
+
+    try {
+      final results = await locationRepository.searchPlaces(
+        query,
+        customerLat: biasLat,
+        customerLng: biasLng,
+      );
+      if (mySearchSeq != _searchSeq) return;
+      final currentLoaded = state is LocationLoaded ? state as LocationLoaded : baseState;
+      emit(currentLoaded.copyWith(
+        searchResults: results,
+        isSearching: false,
+        searchQuery: query,
+        hasSearched: true,
+        clearSearchError: true,
+      ));
+    } catch (e) {
+      debugPrint('⚠️ [LocationBloc] Search failed: $e');
+      if (mySearchSeq != _searchSeq) return;
+      final currentLoaded = state is LocationLoaded ? state as LocationLoaded : baseState;
+      emit(currentLoaded.copyWith(
+        searchResults: const [],
+        isSearching: false,
+        searchQuery: query,
+        hasSearched: true,
+        searchError: 'Unable to search locations. Tap to retry.',
+      ));
     }
   }
 
@@ -137,9 +199,16 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
     ClearSearchSuggestionsEvent event,
     Emitter<LocationState> emit,
   ) {
+    _searchSeq++;
     if (state is LocationLoaded) {
       final current = state as LocationLoaded;
-      emit(current.copyWith(searchResults: [], isSearching: false));
+      emit(current.copyWith(
+        searchResults: const [],
+        isSearching: false,
+        searchQuery: '',
+        hasSearched: false,
+        clearSearchError: true,
+      ));
     }
   }
 
@@ -148,11 +217,12 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
     Emitter<LocationState> emit,
   ) async {
     final myGpsSeq = ++_gpsSeq;
-    emit(const LocationLoading(message: 'GPS से वास्तविक स्थान खोजा जा रहा है...'));
+    emit(const LocationLoading(message: 'Detecting your current location...'));
 
     try {
       // 1. Check if GPS service is enabled
       final isGpsOn = await locationRepository.isLocationServiceEnabled();
+      if (myGpsSeq != _gpsSeq) return;
       if (!isGpsOn) {
         emit(const LocationGpsDisabledState());
         return;
@@ -160,8 +230,10 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
 
       // 2. Check Permission
       LocationPermission permission = await locationRepository.checkPermission();
+      if (myGpsSeq != _gpsSeq) return;
       if (permission == LocationPermission.denied) {
         permission = await locationRepository.requestPermission();
+        if (myGpsSeq != _gpsSeq) return;
         if (permission == LocationPermission.denied) {
           emit(const LocationPermissionDeniedState());
           return;
@@ -193,26 +265,31 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
         isGpsLocked: true,
         cameraLatitude: location.latitude,
         cameraLongitude: location.longitude,
-        zoom: 16.5,
+        zoom: 14.3,
         isConfirmed: false,
       ));
     } on LocationServiceDisabledException {
+      if (myGpsSeq != _gpsSeq) return;
       emit(const LocationGpsDisabledState());
     } on PermissionDeniedException catch (e) {
-      if (e.message?.contains('हमेशा') ?? false) {
+      if (myGpsSeq != _gpsSeq) return;
+      final msg = e.message?.toLowerCase() ?? '';
+      if (msg.contains('permanently') || msg.contains('हमेशा')) {
         emit(const LocationPermissionPermanentlyDeniedState());
       } else {
         emit(const LocationPermissionDeniedState());
       }
     } on TimeoutException catch (e) {
+      if (myGpsSeq != _gpsSeq) return;
       emit(LocationErrorState(
-        userFriendlyMessage: 'GPS सिग्नल मिलने में अधिक समय लग रहा है। कृपया खुले स्थान में जाएं या मैप पर स्थान चुनें।',
+        userFriendlyMessage: 'GPS signal timed out. Please move to an open area, search your location, or select on the map.',
         technicalDetails: 'GPS Timeout: ${e.message}',
       ));
     } catch (e, stack) {
       debugPrint('⚠️ [GPS_DIAG] Fetch GPS Error: $e\n$stack');
+      if (myGpsSeq != _gpsSeq) return;
       emit(LocationErrorState(
-        userFriendlyMessage: 'लोकेशन प्राप्त करने में त्रुटि हुई। कृपया दोबारा प्रयास करें।',
+        userFriendlyMessage: 'Unable to detect location. Please try again or select on the map.',
         technicalDetails: e.toString(),
       ));
     }
@@ -232,7 +309,7 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
     final tempLocation = CustomerLocationEntity(
       latitude: event.latitude,
       longitude: event.longitude,
-      placeName: 'स्थान खोजा जा रहा है...',
+      placeName: 'Detecting location...',
       formattedAddress: 'GPS: ${event.latitude.toStringAsFixed(6)}, ${event.longitude.toStringAsFixed(6)}',
       city: '',
       district: '',
@@ -247,7 +324,7 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
       isGpsLocked: false,
       cameraLatitude: event.latitude,
       cameraLongitude: event.longitude,
-      zoom: currentState is LocationLoaded ? currentState.zoom : 16.5,
+      zoom: currentState is LocationLoaded ? currentState.zoom : 14.3,
       isConfirmed: false,
     ));
 
@@ -273,7 +350,7 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
         final resolvedLocation = geocoded.placeName.isNotEmpty
             ? geocoded
             : tempLocation.copyWith(
-                placeName: 'चयनित स्थान',
+                placeName: 'Location detected',
                 formattedAddress: 'GPS: ${event.latitude.toStringAsFixed(6)}, ${event.longitude.toStringAsFixed(6)}',
               );
 
@@ -282,7 +359,7 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
           isGpsLocked: false,
           cameraLatitude: event.latitude,
           cameraLongitude: event.longitude,
-          zoom: currentState is LocationLoaded ? currentState.zoom : 16.5,
+          zoom: currentState is LocationLoaded ? currentState.zoom : 14.3,
           isConfirmed: false,
         ));
       } catch (e) {
@@ -292,13 +369,13 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
         if (currentSeq == _selectionSeq) {
           emit(LocationLoaded(
             location: tempLocation.copyWith(
-              placeName: 'चयनित स्थान',
+              placeName: 'Location detected',
               formattedAddress: 'GPS: ${event.latitude.toStringAsFixed(6)}, ${event.longitude.toStringAsFixed(6)}',
             ),
             isGpsLocked: false,
             cameraLatitude: event.latitude,
             cameraLongitude: event.longitude,
-            zoom: currentState is LocationLoaded ? currentState.zoom : 16.5,
+            zoom: currentState is LocationLoaded ? currentState.zoom : 14.3,
             isConfirmed: false,
           ));
         }

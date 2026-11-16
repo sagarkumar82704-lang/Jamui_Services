@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 import '../../data/datasources/firebase_lead_remote_data_source.dart';
 import '../../data/repositories/lead_repository_impl.dart';
@@ -102,6 +103,10 @@ class _LeadsPageState extends State<LeadsPage> with SingleTickerProviderStateMix
           title: const Text('ग्राहक लीड्स एवं इनक्वायरी', style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16)),
           bottom: TabBar(
             controller: _tabController,
+            isScrollable: ResponsiveLayout.isSmallMobile(context),
+            tabAlignment: ResponsiveLayout.isSmallMobile(context)
+                ? TabAlignment.start
+                : TabAlignment.fill,
             labelColor: AppColors.accent,
             unselectedLabelColor: AppColors.textMuted,
             indicatorColor: AppColors.accent,
@@ -214,35 +219,42 @@ class _LeadsPageState extends State<LeadsPage> with SingleTickerProviderStateMix
     }
 
     final showLoadMore = !hasReachedMax;
-    final totalCount = leads.length + (showLoadMore ? 1 : 0);
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: totalCount,
-      itemBuilder: (context, index) {
-        if (index < leads.length) {
-          final lead = leads[index];
-          return _buildLeadCard(context, lead);
-        }
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0),
-          child: Center(
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.history_rounded, size: 18),
-              label: const Text('और पुरानी लीड्स लोड करें'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.accent,
-                side: const BorderSide(color: AppColors.accent),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: () {
-                context.read<LeadBloc>().add(const LoadMoreLeadsEvent());
-              },
+    return SingleChildScrollView(
+      child: ResponsiveContentContainer(
+        padding: ResponsiveLayout.pagePadding(context),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ResponsiveCardGrid(
+              tabletColumns: 2,
+              desktopColumns: 2,
+              largeDesktopColumns: 3,
+              spacing: 14,
+              runSpacing: 0,
+              children: leads.map((lead) => _buildLeadCard(context, lead)).toList(),
             ),
-          ),
-        );
-      },
+            if (showLoadMore)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Center(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.history_rounded, size: 18),
+                    label: const Text('और पुरानी लीड्स लोड करें'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.accent,
+                      side: const BorderSide(color: AppColors.accent),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () {
+                      context.read<LeadBloc>().add(const LoadMoreLeadsEvent());
+                    },
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -288,10 +300,15 @@ class _LeadsPageState extends State<LeadsPage> with SingleTickerProviderStateMix
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                lead.customerName,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+              Expanded(
+                child: Text(
+                  lead.customerName,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
@@ -329,6 +346,7 @@ class _LeadsPageState extends State<LeadsPage> with SingleTickerProviderStateMix
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              const SizedBox(width: 6),
               Text(
                 formattedTime,
                 style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
@@ -338,10 +356,14 @@ class _LeadsPageState extends State<LeadsPage> with SingleTickerProviderStateMix
           const Divider(height: 20),
 
           // Actions
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   if (lead.customerPhone.isNotEmpty) ...[
                     IconButton(
@@ -357,7 +379,9 @@ class _LeadsPageState extends State<LeadsPage> with SingleTickerProviderStateMix
                   ],
                 ],
               ),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
                 children: [
                   if (lead.status == LeadStatus.newLead) ...[
                     OutlinedButton(
@@ -373,7 +397,6 @@ class _LeadsPageState extends State<LeadsPage> with SingleTickerProviderStateMix
                       ),
                       child: const Text('अस्वीकार', style: TextStyle(fontSize: 11)),
                     ),
-                    const SizedBox(width: 8),
                     ElevatedButton(
                       onPressed: () {
                         context.read<LeadBloc>().add(

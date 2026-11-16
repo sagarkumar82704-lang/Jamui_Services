@@ -23,6 +23,7 @@ class AdminSidebar extends StatelessWidget {
   static const List<NavigationMenuItem> menuItems = [
     NavigationMenuItem(id: 'dashboard', title: 'Dashboard', icon: Icons.dashboard_outlined),
     NavigationMenuItem(id: 'professional_dashboard', title: 'Professional (Pro)', icon: Icons.storefront_rounded),
+    NavigationMenuItem(id: 'professional_plans', title: 'Professional Plans', icon: Icons.workspace_premium_rounded),
     NavigationMenuItem(id: 'customers', title: 'Customers', icon: Icons.people_outline),
     NavigationMenuItem(id: 'providers', title: 'Providers', icon: Icons.storefront_outlined),
     NavigationMenuItem(id: 'categories', title: 'Categories', icon: Icons.category_outlined),

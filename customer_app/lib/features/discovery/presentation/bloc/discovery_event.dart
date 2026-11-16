@@ -11,30 +11,44 @@ class LoadDiscoveryDataEvent extends DiscoveryEvent {
   final double? customerLatitude;
   final double? customerLongitude;
   final String? customerAreaName;
+  final String? customerVillage;
+  final String? customerBlock;
 
   const LoadDiscoveryDataEvent({
     this.customerLatitude,
     this.customerLongitude,
     this.customerAreaName,
+    this.customerVillage,
+    this.customerBlock,
   });
 
   @override
-  List<Object?> get props => [customerLatitude, customerLongitude, customerAreaName];
+  List<Object?> get props => [
+        customerLatitude,
+        customerLongitude,
+        customerAreaName,
+        customerVillage,
+        customerBlock,
+      ];
 }
 
 class UpdateCustomerLocationEvent extends DiscoveryEvent {
   final double latitude;
   final double longitude;
   final String areaName;
+  final String village;
+  final String block;
 
   const UpdateCustomerLocationEvent({
     required this.latitude,
     required this.longitude,
     required this.areaName,
+    this.village = '',
+    this.block = '',
   });
 
   @override
-  List<Object?> get props => [latitude, longitude, areaName];
+  List<Object?> get props => [latitude, longitude, areaName, village, block];
 }
 
 class SelectCategoryFilterEvent extends DiscoveryEvent {

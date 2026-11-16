@@ -22,6 +22,8 @@ class CustomerDiscoveryRepositoryImpl implements CustomerDiscoveryRepository {
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
   }) async {
     return await remoteDataSource.fetchProviders(
       categoryId: categoryId,
@@ -30,6 +32,8 @@ class CustomerDiscoveryRepositoryImpl implements CustomerDiscoveryRepository {
       customerLatitude: customerLatitude,
       customerLongitude: customerLongitude,
       maxRadiusKm: maxRadiusKm,
+      customerVillage: customerVillage,
+      customerBlock: customerBlock,
     );
   }
 
@@ -41,6 +45,8 @@ class CustomerDiscoveryRepositoryImpl implements CustomerDiscoveryRepository {
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
     int limit = 12,
     dynamic lastDocumentCursor,
   }) async {
@@ -51,6 +57,8 @@ class CustomerDiscoveryRepositoryImpl implements CustomerDiscoveryRepository {
       customerLatitude: customerLatitude,
       customerLongitude: customerLongitude,
       maxRadiusKm: maxRadiusKm,
+      customerVillage: customerVillage,
+      customerBlock: customerBlock,
       limit: limit,
       lastDocumentCursor: lastDocumentCursor,
     );

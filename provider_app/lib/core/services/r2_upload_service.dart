@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -87,7 +88,37 @@ class R2UploadService {
     final cleanFolder = folder.trim().toLowerCase();
     final cleanMime = mimeType.trim().toLowerCase();
 
-    // 2. Request short-lived presigned PUT URL from Cloud Functions
+    // 2. On Web platforms, browsers enforce strict CORS preflights on third-party S3 domains (*.r2.cloudflarestorage.com).
+    // To ensure 100% reliable uploads without browser CORS blocks, route Web uploads via uploadStorageObject:
+    if (kIsWeb) {
+      try {
+        final uploadCallable = _functions.httpsCallable('uploadStorageObject');
+        final base64Data = base64Encode(bytes);
+        final res = await uploadCallable.call(<String, dynamic>{
+          'folder': cleanFolder,
+          'fileName': fileName.trim(),
+          'mimeType': cleanMime,
+          'base64Data': base64Data,
+          if (targetId != null && targetId.trim().isNotEmpty) 'targetId': targetId.trim(),
+        }).timeout(const Duration(seconds: 45));
+
+        final resData = Map<String, dynamic>.from(res.data as Map);
+        final key = resData['objectKey'] as String?;
+        if (key != null && key.isNotEmpty) {
+          debugPrint('🔒 [R2UploadService] Web upload successful for objectKey: $key ($fileSize bytes)');
+          return R2UploadResult(
+            objectKey: key,
+            byteLength: fileSize,
+          );
+        }
+      } on FirebaseFunctionsException catch (fe) {
+        throw R2UploadException('Backend validation error: ${fe.message ?? fe.code}');
+      } catch (e) {
+        debugPrint('⚠️ [R2UploadService] Web direct upload callable failed, falling back to presigned PUT: $e');
+      }
+    }
+
+    // 3. Request short-lived presigned PUT URL from Cloud Functions
     HttpsCallableResult callableResult;
     try {
       final callable = _functions.httpsCallable('getStorageUploadUrl');
@@ -144,6 +175,31 @@ class R2UploadService {
         body: bytes,
       ).timeout(const Duration(seconds: 30));
     } catch (e) {
+      // Fallback: If direct PUT fails with network error (e.g. browser CORS ClientException), route via uploadStorageObject
+      try {
+        final fallbackCallable = _functions.httpsCallable('uploadStorageObject');
+        final base64Data = base64Encode(bytes);
+        final res = await fallbackCallable.call(<String, dynamic>{
+          'folder': cleanFolder,
+          'fileName': fileName.trim(),
+          'mimeType': cleanMime,
+          'base64Data': base64Data,
+          if (targetId != null && targetId.trim().isNotEmpty) 'targetId': targetId.trim(),
+        }).timeout(const Duration(seconds: 45));
+
+        final resData = Map<String, dynamic>.from(res.data as Map);
+        final key = resData['objectKey'] as String?;
+        if (key != null && key.isNotEmpty) {
+          debugPrint('🔒 [R2UploadService] Fallback web upload successful for objectKey: $key ($fileSize bytes)');
+          return R2UploadResult(
+            objectKey: key,
+            byteLength: fileSize,
+          );
+        }
+      } on FirebaseFunctionsException catch (fe) {
+        throw R2UploadException('Backend validation error: ${fe.message ?? fe.code}');
+      } catch (_) {}
+
       throw R2UploadException('Network error during R2 direct upload: $e');
     }
 

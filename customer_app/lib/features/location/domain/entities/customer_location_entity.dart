@@ -7,6 +7,8 @@ class CustomerLocationEntity extends Equatable {
   final String formattedAddress;
   final String village;
   final String locality;
+  final String suburb;
+  final String block;
   final String city;
   final String district;
   final String state;
@@ -21,6 +23,8 @@ class CustomerLocationEntity extends Equatable {
     required this.formattedAddress,
     this.village = '',
     this.locality = '',
+    this.suburb = '',
+    this.block = '',
     required this.city,
     required this.district,
     required this.state,
@@ -36,6 +40,8 @@ class CustomerLocationEntity extends Equatable {
     String? formattedAddress,
     String? village,
     String? locality,
+    String? suburb,
+    String? block,
     String? city,
     String? district,
     String? state,
@@ -50,6 +56,8 @@ class CustomerLocationEntity extends Equatable {
       formattedAddress: formattedAddress ?? this.formattedAddress,
       village: village ?? this.village,
       locality: locality ?? this.locality,
+      suburb: suburb ?? this.suburb,
+      block: block ?? this.block,
       city: city ?? this.city,
       district: district ?? this.district,
       state: state ?? this.state,
@@ -71,6 +79,8 @@ class CustomerLocationEntity extends Equatable {
       'formattedAddress': formattedAddress,
       'village': village,
       'locality': locality,
+      'suburb': suburb,
+      'block': block,
       'city': city,
       'district': district,
       'state': state,
@@ -88,6 +98,8 @@ class CustomerLocationEntity extends Equatable {
       formattedAddress: map['formattedAddress'] as String? ?? '',
       village: map['village'] as String? ?? '',
       locality: map['locality'] as String? ?? '',
+      suburb: map['suburb'] as String? ?? '',
+      block: map['block'] as String? ?? '',
       city: map['city'] as String? ?? '',
       district: map['district'] as String? ?? '',
       state: map['state'] as String? ?? '',
@@ -107,6 +119,8 @@ class CustomerLocationEntity extends Equatable {
         formattedAddress,
         village,
         locality,
+        suburb,
+        block,
         city,
         district,
         state,

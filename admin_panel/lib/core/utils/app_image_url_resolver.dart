@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../config/app_environment.dart';
 
 /// Centralized, non-breaking image URL resolver for Jamui Services (Admin Panel).
 ///
@@ -26,9 +27,9 @@ class AppImageUrlResolver {
   /// 1. Explicit override (e.g. from unit tests)
   /// 2. In-memory cached value
   /// 3. Lazy initial fetch from Firestore `app_settings/customer_app`
-  /// 4. Empty string fallback (safe, non-breaking)
+  /// 4. AppEnvironmentConfig.defaultImageBaseUrl (environment-aware fallback)
   static String get activeBaseUrl {
-    if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
+    if (_overrideBaseUrl != null) {
       return _overrideBaseUrl!;
     }
     if (_cachedBaseUrl.isNotEmpty) {
@@ -38,7 +39,10 @@ class AppImageUrlResolver {
       _hasAttemptedFetch = true;
       _fetchBaseUrlFromFirestore();
     }
-    return _cachedBaseUrl;
+    if (_cachedBaseUrl.isNotEmpty) {
+      return _cachedBaseUrl;
+    }
+    return AppEnvironmentConfig.defaultImageBaseUrl;
   }
 
   static void _fetchBaseUrlFromFirestore() {

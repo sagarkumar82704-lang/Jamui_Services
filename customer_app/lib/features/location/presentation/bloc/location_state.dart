@@ -15,7 +15,7 @@ class LocationInitial extends LocationState {
 class LocationLoading extends LocationState {
   final String message;
 
-  const LocationLoading({this.message = 'आपकी वर्तमान लोकेशन खोजी जा रही है...'});
+  const LocationLoading({this.message = 'Detecting your current location...'});
 
   @override
   List<Object?> get props => [message];
@@ -30,6 +30,9 @@ class LocationLoaded extends LocationState {
   final bool isConfirmed;
   final List<CustomerLocationEntity> searchResults;
   final bool isSearching;
+  final String searchQuery;
+  final bool hasSearched;
+  final String? searchError;
 
   const LocationLoaded({
     required this.location,
@@ -40,6 +43,9 @@ class LocationLoaded extends LocationState {
     this.isConfirmed = false,
     this.searchResults = const [],
     this.isSearching = false,
+    this.searchQuery = '',
+    this.hasSearched = false,
+    this.searchError,
   });
 
   LocationLoaded copyWith({
@@ -51,6 +57,10 @@ class LocationLoaded extends LocationState {
     bool? isConfirmed,
     List<CustomerLocationEntity>? searchResults,
     bool? isSearching,
+    String? searchQuery,
+    bool? hasSearched,
+    String? searchError,
+    bool clearSearchError = false,
   }) {
     return LocationLoaded(
       location: location ?? this.location,
@@ -61,6 +71,9 @@ class LocationLoaded extends LocationState {
       isConfirmed: isConfirmed ?? this.isConfirmed,
       searchResults: searchResults ?? this.searchResults,
       isSearching: isSearching ?? this.isSearching,
+      searchQuery: searchQuery ?? this.searchQuery,
+      hasSearched: hasSearched ?? this.hasSearched,
+      searchError: clearSearchError ? null : (searchError ?? this.searchError),
     );
   }
 
@@ -74,6 +87,9 @@ class LocationLoaded extends LocationState {
         isConfirmed,
         searchResults,
         isSearching,
+        searchQuery,
+        hasSearched,
+        searchError,
       ];
 }
 
@@ -81,7 +97,7 @@ class LocationPermissionDeniedState extends LocationState {
   final String message;
 
   const LocationPermissionDeniedState({
-    this.message = '📍 Location permission required\nNearby services दिखाने के लिए हमें आपकी current location की आवश्यकता है।',
+    this.message = 'Location permission denied',
   });
 
   @override
@@ -92,7 +108,7 @@ class LocationPermissionPermanentlyDeniedState extends LocationState {
   final String message;
 
   const LocationPermissionPermanentlyDeniedState({
-    this.message = 'Location permission बंद है। कृपया Settings में जाकर location permission enable करें।',
+    this.message = 'Location permission denied',
   });
 
   @override
@@ -103,7 +119,7 @@ class LocationGpsDisabledState extends LocationState {
   final String message;
 
   const LocationGpsDisabledState({
-    this.message = 'आपका Location/GPS बंद है। कृपया इसे चालू करके दोबारा प्रयास करें।',
+    this.message = 'Enable GPS to detect your location',
   });
 
   @override

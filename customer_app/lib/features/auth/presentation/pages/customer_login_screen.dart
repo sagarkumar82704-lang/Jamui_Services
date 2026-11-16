@@ -5,61 +5,62 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/provider_app_launcher_service.dart';
-import '../../../../core/widgets/app_logo.dart';
 import '../../../home/presentation/pages/customer_main_shell.dart';
 import '../bloc/customer_auth_bloc.dart';
 import '../bloc/customer_auth_event.dart';
 import '../bloc/customer_auth_state.dart';
 import 'customer_profile_setup_screen.dart';
-import 'customer_registration_screen.dart';
 
 /// [CustomerLoginScreen]
-/// Dedicated 100% Email + Password Authentication for Jamui Services Customer App.
-/// Zero Firebase Phone SMS costs. Pure customer role isolated session.
+/// Pixel-perfect implementation matching `jamui-login-v2.svg` design:
+/// - Screen 1: "Create your account" (Sign Up)
+/// - Screen 2: "Welcome back" (Log In)
+/// Preserves 100% of existing authentication logic, controllers,
+/// bloc events, navigation routes, and provider separation.
 class CustomerLoginScreen extends StatefulWidget {
-  const CustomerLoginScreen({super.key});
+  final bool initialIsSignUp;
+
+  const CustomerLoginScreen({
+    super.key,
+    this.initialIsSignUp = true,
+  });
 
   @override
   State<CustomerLoginScreen> createState() => _CustomerLoginScreenState();
 }
 
-class _CustomerLoginScreenState extends State<CustomerLoginScreen>
-    with SingleTickerProviderStateMixin {
+class _CustomerLoginScreenState extends State<CustomerLoginScreen> {
+  // Theme Palette derived from jamui-login-v2.svg
+  static const Color _cardBgColor = Color(0xFFFBF6EA);
+  static const Color _canvasBgColor = Color(0xFFE9E2CF);
+  static const Color _cardBorderColor = Color(0xFFCFC6AE);
+  static const Color _primaryGreen = Color(0xFF1F4D3A);
+  static const Color _accentOrange = Color(0xFFF28C28);
+  static const Color _burntOrange = Color(0xFFB35A08);
+  static const Color _subtitleColor = Color(0xFF6B6B5E);
+  static const Color _fieldBorderColor = Color(0xFFDDD3BA);
+  static const Color _placeholderColor = Color(0xFF7C7C6C);
+  static const Color _switchTextColor = Color(0xFF5A5A4E);
+
   final _formKey = GlobalKey<FormState>();
 
+  // Input Controllers
+  final TextEditingController _fullNameController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  late bool _isSignUp;
   bool _obscurePassword = true;
   String? _errorMessage;
   DateTime? _lastBackPressTime;
 
-  // 0 = Login as Customer, 1 = Login as Provider
-  int _selectedLoginRoleIndex = 0;
-
-  late AnimationController _animController;
-  late Animation<double> _fadeAnimation;
-  late Animation<Offset> _slideAnimation;
-
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-    _fadeAnimation = CurvedAnimation(
-      parent: _animController,
-      curve: Curves.easeOut,
-    );
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.04),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
-    );
-    _animController.forward();
+    _isSignUp = widget.initialIsSignUp;
 
+    // Verify existing active session on mount
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
         final user = FirebaseAuth.instance.currentUser;
@@ -72,7 +73,8 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
 
   @override
   void dispose() {
-    _animController.dispose();
+    _fullNameController.dispose();
+    _phoneController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -92,6 +94,27 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
     }
   }
 
+  void _submitRegistration() {
+    FocusScope.of(context).unfocus();
+    setState(() => _errorMessage = null);
+
+    if (_formKey.currentState?.validate() ?? false) {
+      final rawPhone = _phoneController.text.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
+      final formattedPhone = rawPhone.startsWith('+91')
+          ? rawPhone
+          : (rawPhone.length == 10 ? '+91$rawPhone' : rawPhone);
+
+      context.read<CustomerAuthBloc>().add(
+            RegisterWithEmailEvent(
+              fullName: _fullNameController.text.trim(),
+              phoneNumber: formattedPhone,
+              email: _emailController.text.trim(),
+              password: _passwordController.text.trim(),
+            ),
+          );
+    }
+  }
+
   void _showForgotPasswordDialog() {
     final resetEmailController = TextEditingController(text: _emailController.text.trim());
     final resetFormKey = GlobalKey<FormState>();
@@ -99,12 +122,23 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: _cardBgColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: const BorderSide(color: _cardBorderColor, width: 1.5),
+        ),
         title: const Row(
           children: [
-            Icon(Icons.lock_reset_rounded, color: AppColors.primary),
+            Icon(Icons.lock_reset_rounded, color: _primaryGreen),
             SizedBox(width: 10),
-            Text('पासवर्ड रीसेट करें', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            Text(
+              'Forgot password?',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: _primaryGreen,
+              ),
+            ),
           ],
         ),
         content: Form(
@@ -114,32 +148,41 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'अपना पंजीकृत ईमेल पता लिखें। हम आपको पासवर्ड रीसेट करने का लिंक भेजेंगे।',
-                style: TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4),
+                'Enter your registered email address to receive a secure password reset link.',
+                style: TextStyle(fontSize: 13, color: _subtitleColor, height: 1.4),
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: resetEmailController,
                 keyboardType: TextInputType.emailAddress,
                 autofocus: true,
+                style: const TextStyle(fontSize: 14, color: _primaryGreen),
                 decoration: InputDecoration(
-                  hintText: 'उदा. customer@example.com',
-                  prefixIcon: const Icon(Icons.email_outlined, color: AppColors.primary, size: 20),
+                  hintText: 'Email address',
+                  hintStyle: const TextStyle(fontSize: 14, color: _placeholderColor),
                   filled: true,
-                  fillColor: const Color(0xFFF9FBFA),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: _fieldBorderColor, width: 1.5),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: _fieldBorderColor, width: 1.5),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: _primaryGreen, width: 2),
                   ),
                 ),
                 validator: (val) {
                   if (val == null || val.trim().isEmpty) {
-                    return 'कृपया ईमेल पता दर्ज करें';
+                    return 'Please enter your email';
                   }
                   final regex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
                   if (!regex.hasMatch(val.trim())) {
-                    return 'कृपया सही ईमेल पता दर्ज करें';
+                    return 'Please enter a valid email';
                   }
                   return null;
                 },
@@ -150,7 +193,7 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('रद्द करें', style: TextStyle(color: Colors.grey)),
+            child: const Text('Cancel', style: TextStyle(color: _subtitleColor)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -161,11 +204,12 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
               }
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
+              backgroundColor: _primaryGreen,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
             ),
-            child: const Text('रीसेट लिंक भेजें'),
+            child: const Text('Send Reset Link', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -183,10 +227,10 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
           _lastBackPressTime = now;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('ऐप बंद करने के लिए दोबारा बैक बटन दबाएं'),
+              content: const Text('Press back again to exit'),
               duration: const Duration(seconds: 2),
               behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.grey.shade900,
+              backgroundColor: _primaryGreen,
             ),
           );
         } else {
@@ -194,7 +238,7 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFFF8FAF9),
+        backgroundColor: _canvasBgColor,
         body: BlocConsumer<CustomerAuthBloc, CustomerAuthState>(
           listener: (context, state) {
             if (state is CustomerAuthenticatedState) {
@@ -225,13 +269,13 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'पासवर्ड रीसेट लिंक ${state.email} पर भेजा गया। कृपया अपना इनबॉक्स चेक करें।',
+                          'Password reset link sent to ${state.email}. Check your inbox.',
                           style: const TextStyle(fontSize: 13),
                         ),
                       ),
                     ],
                   ),
-                  backgroundColor: AppColors.primary,
+                  backgroundColor: _primaryGreen,
                   behavior: SnackBarBehavior.floating,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   duration: const Duration(seconds: 5),
@@ -263,121 +307,305 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
             final loadingMessage = state is CustomerAuthLoadingState ? state.message : null;
 
             return SafeArea(
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                child: Column(
-                  children: [
-                    // Top Hero Branding Header
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.only(top: 28, bottom: 24, left: 24, right: 24),
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [AppColors.primary, Color(0xFF0F8A6D)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWideScreen = constraints.maxWidth > 480;
+
+                  return Center(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      padding: EdgeInsets.symmetric(
+                        vertical: isWideScreen ? 24 : 0,
+                        horizontal: isWideScreen ? 16 : 0,
+                      ),
+                      child: Container(
+                        width: isWideScreen ? 380 : double.infinity,
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        decoration: BoxDecoration(
+                          color: _cardBgColor,
+                          borderRadius: BorderRadius.circular(isWideScreen ? 36 : 0),
+                          border: isWideScreen
+                              ? Border.all(color: _cardBorderColor, width: 2)
+                              : null,
+                          boxShadow: isWideScreen
+                              ? [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.08),
+                                    blurRadius: 24,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ]
+                              : null,
                         ),
-                        borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
-                      ),
-                      child: Column(
-                        children: [
-                          const AppLogo(
-                            size: 64,
-                            showShadow: true,
-                            borderRadius: BorderRadius.all(Radius.circular(18)),
-                          ),
-                          const SizedBox(height: 14),
-                          const Text(
-                            'JAMUI SERVICES',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.2,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _selectedLoginRoleIndex == 0
-                                ? 'ग्राहक लॉगिन — ईमेल व पासवर्ड द्वारा सुरक्षित प्रवेश'
-                                : 'सर्विस प्रोवाइडर लॉगिन — पार्टनर पोर्टल',
-                            style: TextStyle(
-                              fontSize: 13.5,
-                              color: Colors.white.withValues(alpha: 0.92),
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // 1. Brand Logo & Name Header
+                              _buildLogoHeader(),
 
-                    const SizedBox(height: 20),
+                              const SizedBox(height: 38),
 
-                    // Main Authentication Card
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: FadeTransition(
-                        opacity: _fadeAnimation,
-                        child: SlideTransition(
-                          position: _slideAnimation,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(24),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.05),
-                                  blurRadius: 18,
-                                  offset: const Offset(0, 6),
+                              // 2. Heading & Subtitle
+                              Text(
+                                _isSignUp ? 'Create your account' : 'Welcome back',
+                                style: const TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w700,
+                                  color: _primaryGreen,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                _isSignUp
+                                    ? 'Book trusted services near you'
+                                    : 'Log in to continue',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: _subtitleColor,
+                                ),
+                              ),
+
+                              const SizedBox(height: 24),
+
+                              // Error Banner
+                              if (_errorMessage != null) ...[
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.red.shade200),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          _errorMessage!,
+                                          style: TextStyle(color: Colors.red.shade800, fontSize: 12.5),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+
+                              // 3. Form Input Fields
+                              if (_isSignUp) ...[
+                                // Full name
+                                _buildInputField(
+                                  controller: _fullNameController,
+                                  hintText: 'Full name',
+                                  keyboardType: TextInputType.name,
+                                  enabled: !isLoading,
+                                  validator: (val) {
+                                    if (val == null || val.trim().isEmpty) {
+                                      return 'Please enter your full name';
+                                    }
+                                    if (val.trim().length < 2) {
+                                      return 'Name must be at least 2 characters';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 14),
+
+                                // Mobile number
+                                _buildInputField(
+                                  controller: _phoneController,
+                                  hintText: 'Mobile number',
+                                  keyboardType: TextInputType.phone,
+                                  enabled: !isLoading,
+                                  validator: (val) {
+                                    if (val == null || val.trim().isEmpty) {
+                                      return 'Please enter your mobile number';
+                                    }
+                                    final digits = val.replaceAll(RegExp(r'\D'), '');
+                                    if (digits.length < 10) {
+                                      return 'Please enter a valid 10-digit number';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                                const SizedBox(height: 14),
+                              ],
+
+                              // Email
+                              _buildInputField(
+                                controller: _emailController,
+                                hintText: 'Email',
+                                keyboardType: TextInputType.emailAddress,
+                                enabled: !isLoading,
+                                validator: (val) {
+                                  if (val == null || val.trim().isEmpty) {
+                                    return 'Please enter your email';
+                                  }
+                                  final regex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+                                  if (!regex.hasMatch(val.trim())) {
+                                    return 'Please enter a valid email';
+                                  }
+                                  return null;
+                                },
+                              ),
+                              const SizedBox(height: 14),
+
+                              // Password (with Show/Hide)
+                              _buildInputField(
+                                controller: _passwordController,
+                                hintText: 'Password',
+                                obscureText: _obscurePassword,
+                                enabled: !isLoading,
+                                suffix: GestureDetector(
+                                  onTap: () => setState(() => _obscurePassword = !_obscurePassword),
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(right: 16),
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      widthFactor: 1,
+                                      child: Text(
+                                        _obscurePassword ? 'Show' : 'Hide',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: _burntOrange,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                validator: (val) {
+                                  if (val == null || val.trim().isEmpty) {
+                                    return 'Please enter your password';
+                                  }
+                                  if (val.trim().length < 6) {
+                                    return 'Password must be at least 6 characters';
+                                  }
+                                  return null;
+                                },
+                              ),
+
+                              // Forgot Password (only in Log in view)
+                              if (!_isSignUp) ...[
+                                const SizedBox(height: 12),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: GestureDetector(
+                                    onTap: isLoading ? null : _showForgotPasswordDialog,
+                                    child: const Text(
+                                      'Forgot password?',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: _burntOrange,
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ],
-                            ),
-                            padding: const EdgeInsets.all(22),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                // Top Two-Option Role Selector
-                                _buildRoleSelector(),
-                                const SizedBox(height: 20),
 
-                                if (_selectedLoginRoleIndex == 0)
-                                  _buildEmailLoginForm(isLoading, loadingMessage)
-                                else
-                                  _buildProviderLaunchView(),
-                              ],
-                            ),
+                              const SizedBox(height: 24),
+
+                              // 4. Primary Button (Pill shape, 52px height)
+                              SizedBox(
+                                height: 52,
+                                child: ElevatedButton(
+                                  onPressed: isLoading
+                                      ? null
+                                      : (_isSignUp ? _submitRegistration : _submitLogin),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _primaryGreen,
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(26),
+                                    ),
+                                  ),
+                                  child: isLoading
+                                      ? Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                color: Colors.white,
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(
+                                              loadingMessage ?? (_isSignUp ? 'Creating account...' : 'Logging in...'),
+                                              style: const TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : Text(
+                                          _isSignUp ? 'Create account' : 'Log in',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              // 5. Switch prompt link
+                              Center(
+                                child: GestureDetector(
+                                  onTap: isLoading
+                                      ? null
+                                      : () {
+                                          setState(() {
+                                            _isSignUp = !_isSignUp;
+                                            _errorMessage = null;
+                                          });
+                                        },
+                                  child: RichText(
+                                    text: TextSpan(
+                                      text: _isSignUp
+                                          ? 'Already have an account? '
+                                          : 'New here? ',
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        color: _switchTextColor,
+                                      ),
+                                      children: [
+                                        TextSpan(
+                                          text: _isSignUp ? 'Log in' : 'Create account',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            color: _burntOrange,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 44),
+
+                              // 6. Partner Portal Card (Orange #F28C28)
+                              _buildPartnerPortalCard(),
+                            ],
                           ),
                         ),
                       ),
                     ),
-
-                    const SizedBox(height: 20),
-
-                    // Trust Badges
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _buildTrustPill(
-                            icon: Icons.verified_user_outlined,
-                            text: '100% वेरिफाइड',
-                          ),
-                          _buildTrustPill(
-                            icon: Icons.speed_rounded,
-                            text: 'तुरंत सेवा',
-                          ),
-                          _buildTrustPill(
-                            icon: Icons.lock_outline_rounded,
-                            text: 'सुरक्षित खाता',
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 28),
-                  ],
-                ),
+                  );
+                },
               ),
             );
           },
@@ -386,431 +614,135 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen>
     );
   }
 
-  // TOP SEGMENTED ROLE SELECTOR
-  Widget _buildRoleSelector() {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F3),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      padding: const EdgeInsets.all(4),
-      child: Row(
-        children: [
-          // Option 1: Customer Login
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                if (_selectedLoginRoleIndex != 0) {
-                  setState(() {
-                    _selectedLoginRoleIndex = 0;
-                    _errorMessage = null;
-                  });
-                }
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: _selectedLoginRoleIndex == 0 ? Colors.white : Colors.transparent,
-                  borderRadius: BorderRadius.circular(11),
-                  boxShadow: _selectedLoginRoleIndex == 0
-                      ? [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.08),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.person_rounded,
-                      size: 17,
-                      color: _selectedLoginRoleIndex == 0 ? AppColors.primary : AppColors.textSecondary,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Login as Customer',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: _selectedLoginRoleIndex == 0 ? FontWeight.bold : FontWeight.w600,
-                        color: _selectedLoginRoleIndex == 0 ? AppColors.primary : AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+  // BRAND LOGO & TITLE
+  Widget _buildLogoHeader() {
+    return Row(
+      children: [
+        // Green square badge (44x44, rx=12) with orange "J"
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: _primaryGreen,
+            borderRadius: BorderRadius.circular(12),
           ),
-
-          // Option 2: Provider Login
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                ProviderAppLauncherService.openProviderLoginWebView(context);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.transparent,
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.handyman_rounded,
-                      size: 17,
-                      color: AppColors.primary,
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      'Login as Provider',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // CUSTOMER EMAIL + PASSWORD LOGIN FORM
-  Widget _buildEmailLoginForm(bool isLoading, String? loadingMessage) {
-    return Form(
-      key: _formKey,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'ग्राहक लॉगिन (Customer Login)',
+          alignment: Alignment.center,
+          child: const Text(
+            'J',
             style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              fontSize: 26,
+              fontWeight: FontWeight.w700,
+              color: _accentOrange,
+              height: 1.1,
             ),
           ),
-          const SizedBox(height: 4),
-          const Text(
-            'कृपया अपना ईमेल और पासवर्ड दर्ज करें',
-            style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+        ),
+        const SizedBox(width: 12),
+        const Text(
+          'Jamui Services',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color: _primaryGreen,
+            letterSpacing: -0.2,
           ),
-          const SizedBox(height: 18),
+        ),
+      ],
+    );
+  }
 
-          if (_errorMessage != null) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.shade50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.red.shade200),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _errorMessage!,
-                      style: TextStyle(color: Colors.red.shade800, fontSize: 12.5),
-                    ),
-                  ),
-                ],
+  // INPUT TEXT FIELD COMPONENT MATCHING SVG SPECS
+  Widget _buildInputField({
+    required TextEditingController controller,
+    required String hintText,
+    TextInputType keyboardType = TextInputType.text,
+    bool obscureText = false,
+    bool enabled = true,
+    Widget? suffix,
+    String? Function(String?)? validator,
+  }) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      obscureText: obscureText,
+      enabled: enabled,
+      style: const TextStyle(
+        fontSize: 14,
+        color: _primaryGreen,
+        fontWeight: FontWeight.w500,
+      ),
+      decoration: InputDecoration(
+        hintText: hintText,
+        hintStyle: const TextStyle(
+          fontSize: 14,
+          color: _placeholderColor,
+          fontWeight: FontWeight.normal,
+        ),
+        filled: true,
+        fillColor: Colors.white,
+        suffixIcon: suffix,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: _fieldBorderColor, width: 1.5),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: _fieldBorderColor, width: 1.5),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: _primaryGreen, width: 1.8),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AppColors.error, width: 1.5),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AppColors.error, width: 1.8),
+        ),
+      ),
+      validator: validator,
+    );
+  }
+
+  // BOTTOM PARTNER PORTAL CARD
+  Widget _buildPartnerPortalCard() {
+    return GestureDetector(
+      onTap: () {
+        ProviderAppLauncherService.openProviderLoginWebView(context);
+      },
+      child: Container(
+        height: 84,
+        decoration: BoxDecoration(
+          color: _accentOrange,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: const Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              'Partner Portal',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: _primaryGreen,
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: 4),
+            Text(
+              'Shop owner or service provider? Log in here',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+                color: _primaryGreen,
+              ),
+            ),
           ],
-
-          // Email Field
-          const Text(
-            'ईमेल पता (Email Address) *',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-          ),
-          const SizedBox(height: 6),
-          TextFormField(
-            controller: _emailController,
-            keyboardType: TextInputType.emailAddress,
-            enabled: !isLoading,
-            decoration: InputDecoration(
-              hintText: 'उदा. customer@example.com',
-              hintStyle: TextStyle(fontSize: 13.5, color: Colors.grey.shade400),
-              prefixIcon: const Icon(Icons.email_outlined, color: AppColors.primary, size: 20),
-              filled: true,
-              fillColor: const Color(0xFFF9FBFA),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: AppColors.primary, width: 1.8),
-              ),
-              errorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: AppColors.error),
-              ),
-            ),
-            validator: (val) {
-              if (val == null || val.trim().isEmpty) {
-                return 'कृपया ईमेल पता दर्ज करें';
-              }
-              final regex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
-              if (!regex.hasMatch(val.trim())) {
-                return 'कृपया सही ईमेल पता दर्ज करें';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: 16),
-
-          // Password Field
-          const Text(
-            'पासवर्ड (Password) *',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-          ),
-          const SizedBox(height: 6),
-          TextFormField(
-            controller: _passwordController,
-            obscureText: _obscurePassword,
-            enabled: !isLoading,
-            decoration: InputDecoration(
-              hintText: 'अपना पासवर्ड लिखें',
-              hintStyle: TextStyle(fontSize: 13.5, color: Colors.grey.shade400),
-              prefixIcon: const Icon(Icons.lock_outline_rounded, color: AppColors.primary, size: 20),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                  color: Colors.grey.shade600,
-                  size: 20,
-                ),
-                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-              ),
-              filled: true,
-              fillColor: const Color(0xFFF9FBFA),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: AppColors.primary, width: 1.8),
-              ),
-              errorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: AppColors.error),
-              ),
-            ),
-            validator: (val) {
-              if (val == null || val.trim().isEmpty) {
-                return 'कृपया पासवर्ड दर्ज करें';
-              }
-              if (val.trim().length < 6) {
-                return 'पासवर्ड कम से कम 6 अक्षरों का होना चाहिए';
-              }
-              return null;
-            },
-          ),
-
-          // Forgot Password Row
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: isLoading ? null : _showForgotPasswordDialog,
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 6),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text(
-                'पासवर्ड भूल गए? (Forgot Password)',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.primary,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // Login Button
-          SizedBox(
-            height: 50,
-            child: ElevatedButton(
-              onPressed: isLoading ? null : _submitLogin,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                elevation: 2,
-              ),
-              child: isLoading
-                  ? Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.2),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          loadingMessage ?? 'लॉगिन हो रहा है...',
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    )
-                  : const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.login_rounded, size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          'लॉगिन करें (Login)',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Don't have an account? Register Now button
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F3),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Wrap(
-              alignment: WrapAlignment.center,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  'नया ग्राहक खाता चाहिए? ',
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
-                ),
-                GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const CustomerRegistrationScreen()),
-                    );
-                  },
-                  child: const Text(
-                    'रजिस्टर करें (Register Now)',
-                    style: TextStyle(
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // OPTION 2: PROVIDER PORTAL LAUNCH VIEW
-  Widget _buildProviderLaunchView() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF9FBFA),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        children: [
-          const Icon(Icons.handyman_rounded, color: AppColors.primary, size: 40),
-          const SizedBox(height: 10),
-          const Text(
-            'कारीगर व सर्विस पार्टनर पोर्टल',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'यदि आप प्लंबर, इलेक्ट्रीशियन या अन्य सेवा प्रदाता हैं, तो Jamui Provider पोर्टल खोलें।',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary, height: 1.4),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 46,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                ProviderAppLauncherService.openProviderLoginWebView(context);
-              },
-              icon: const Icon(Icons.open_in_browser_rounded, size: 18),
-              label: const Text('कारीगर पोर्टल खोलें', style: TextStyle(fontWeight: FontWeight.bold)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTrustPill({required IconData icon, required String text}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
-            blurRadius: 4,
-            offset: const Offset(0, 1),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: AppColors.primary),
-          const SizedBox(width: 4),
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

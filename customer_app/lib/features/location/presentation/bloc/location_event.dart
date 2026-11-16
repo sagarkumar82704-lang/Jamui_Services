@@ -84,7 +84,7 @@ class SetExplicitLocationEvent extends LocationEvent {
   const SetExplicitLocationEvent({
     required this.location,
     this.moveCamera = true,
-    this.zoom = 16.5,
+    this.zoom = 14.3,
   });
 
   @override

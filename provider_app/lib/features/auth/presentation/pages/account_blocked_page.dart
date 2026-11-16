@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../bloc/provider_auth_bloc.dart';
 import '../bloc/provider_auth_event.dart';
 
@@ -17,12 +18,14 @@ class AccountBlockedPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+        child: Center(
+          child: SingleChildScrollView(
+            child: ResponsiveFormShell(
+              maxWidth: 480,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
@@ -79,6 +82,8 @@ class AccountBlockedPage extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+            ),
           ),
         ),
       ),

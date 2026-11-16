@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/app_image_utils.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../../core/widgets/photo_source_picker.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 import '../../../auth/presentation/bloc/provider_auth_bloc.dart';
@@ -231,10 +232,13 @@ class _ProviderBusinessProfileScreenState extends State<ProviderBusinessProfileS
             ],
           ),
           body: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+            padding: EdgeInsets.zero,
+            child: ResponsiveContentContainer(
+              maxWidth: 960,
+              padding: ResponsiveLayout.pagePadding(context),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 // 1. Business Information Card
                 _buildCardContainer(
                   title: 'Business Information',
@@ -684,6 +688,7 @@ class _ProviderBusinessProfileScreenState extends State<ProviderBusinessProfileS
                 ),
                 const SizedBox(height: 24),
               ],
+            ),
             ),
           ),
         );

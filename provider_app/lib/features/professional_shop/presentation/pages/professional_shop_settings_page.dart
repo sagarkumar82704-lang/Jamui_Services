@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../data/datasources/professional_provider_remote_data_source.dart';
 import '../../domain/entities/professional_shop_profile_entity.dart';
+import '../../../../core/utils/responsive_layout.dart';
+import '../../../../core/localization/provider_strings.dart';
+import '../../../../core/localization/language_selection_modal.dart';
 
 class ProfessionalShopSettingsPage extends StatefulWidget {
   final ProfessionalShopProfileEntity shop;
@@ -62,9 +65,9 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
       if (mounted) {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Shop settings updated successfully!'),
-            backgroundColor: Color(0xFF0F766E),
+          SnackBar(
+            content: Text(ProviderStrings.settingsSavedSuccess),
+            backgroundColor: const Color(0xFF0F766E),
           ),
         );
       }
@@ -85,32 +88,42 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
-        title: const Text(
-          'Shop Settings',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+        title: Text(
+          ProviderStrings.shopSettings,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
         ),
+        actions: [
+          IconButton(
+            tooltip: ProviderStrings.selectLanguage,
+            icon: const Icon(Icons.language_rounded, color: Color(0xFF0F766E)),
+            onPressed: () => LanguageSelectionModal.show(context),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Delivery Settings Section (Matching Reference Image)
+        padding: EdgeInsets.zero,
+        child: ResponsiveFormShell(
+          maxWidth: 680,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Delivery Settings Section (Matching Reference Image)
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 3)),
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 8, offset: const Offset(0, 3)),
                 ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Delivery Settings',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                  Text(
+                    ProviderStrings.deliverySettings,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                   ),
                   const SizedBox(height: 12),
 
@@ -118,10 +131,10 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Home Delivery', style: TextStyle(fontSize: 13.5, color: Color(0xFF334155))),
+                      Text(ProviderStrings.homeDelivery, style: const TextStyle(fontSize: 13.5, color: Color(0xFF334155))),
                       Switch(
                         value: _homeDelivery,
-                        activeColor: const Color(0xFF0F766E),
+                        activeThumbColor: const Color(0xFF0F766E),
                         onChanged: (v) => setState(() => _homeDelivery = v),
                       ),
                     ],
@@ -129,19 +142,19 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
                   const Divider(height: 18),
 
                   // Delivery Charge
-                  _buildSettingInputRow('Delivery Charge (₹)', _deliveryChargeCtrl, 'e.g. 40'),
+                  _buildSettingInputRow(ProviderStrings.deliveryCharge, _deliveryChargeCtrl, 'e.g. 40'),
                   const SizedBox(height: 12),
 
                   // Min. Order Amount
-                  _buildSettingInputRow('Min. Order Amount (₹)', _minOrderCtrl, 'e.g. 199'),
+                  _buildSettingInputRow(ProviderStrings.minOrderAmount, _minOrderCtrl, 'e.g. 199'),
                   const SizedBox(height: 12),
 
                   // Delivery Radius
-                  _buildSettingInputRow('Delivery Radius (km)', _radiusCtrl, 'e.g. 5'),
+                  _buildSettingInputRow(ProviderStrings.deliveryRadius, _radiusCtrl, 'e.g. 5'),
                   const SizedBox(height: 12),
 
                   // Estimated Delivery Time
-                  _buildSettingInputRow('Estimated Delivery Time (mins)', _estimatedTimeCtrl, 'e.g. 30'),
+                  _buildSettingInputRow(ProviderStrings.estimatedDeliveryTime, _estimatedTimeCtrl, 'e.g. 30'),
                 ],
               ),
             ),
@@ -154,15 +167,15 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 3)),
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 8, offset: const Offset(0, 3)),
                 ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Pickup Settings',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                  Text(
+                    ProviderStrings.pickupSettings,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                   ),
                   const SizedBox(height: 12),
 
@@ -170,10 +183,10 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Store Pickup', style: TextStyle(fontSize: 13.5, color: Color(0xFF334155))),
+                      Text(ProviderStrings.storePickup, style: const TextStyle(fontSize: 13.5, color: Color(0xFF334155))),
                       Switch(
                         value: _pickup,
-                        activeColor: const Color(0xFF0F766E),
+                        activeThumbColor: const Color(0xFF0F766E),
                         onChanged: (v) => setState(() => _pickup = v),
                       ),
                     ],
@@ -181,7 +194,7 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
                   const Divider(height: 18),
 
                   // Pickup Instructions
-                  const Text('Pickup Instructions', style: TextStyle(fontSize: 13.5, color: Color(0xFF334155))),
+                  Text(ProviderStrings.pickupInstructions, style: const TextStyle(fontSize: 13.5, color: Color(0xFF334155))),
                   const SizedBox(height: 6),
                   TextField(
                     controller: _pickupInstructionsCtrl,
@@ -194,6 +207,55 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
                     ),
                   ),
                 ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // App Language Section Card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFEFF6FF),
+                    child: Icon(Icons.language_rounded, color: Color(0xFF0F766E), size: 20),
+                  ),
+                  title: Text(
+                    ProviderStrings.languageSettingTitle,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                  ),
+                  subtitle: Text(
+                    ProviderStrings.languageSettingSubtitle,
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0FDF4),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFF16A34A)),
+                        ),
+                        child: Text(
+                          ProviderStrings.isHindi ? 'हिन्दी' : 'English',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF16A34A)),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.grey),
+                    ],
+                  ),
+                  onTap: () => LanguageSelectionModal.show(context),
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -211,13 +273,14 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
                 ),
                 child: _isSaving
                     ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
-                    : const Text(
-                        'Save Changes',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                    : Text(
+                        ProviderStrings.saveSettings,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
                       ),
               ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -227,7 +290,8 @@ class _ProfessionalShopSettingsPageState extends State<ProfessionalShopSettingsP
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(fontSize: 13, color: Color(0xFF334155))),
+        Expanded(child: Text(label, style: const TextStyle(fontSize: 13, color: Color(0xFF334155)))),
+        const SizedBox(width: 8),
         SizedBox(
           width: 90,
           height: 38,

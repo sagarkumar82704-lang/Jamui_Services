@@ -57,7 +57,7 @@ class ProfessionalShopDetailsPage extends StatelessWidget {
                           ? Image.network(
                               shop.bannerUrl,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => _buildFallbackBanner(),
+                              errorBuilder: (_, _, _) => _buildFallbackBanner(),
                             )
                           : _buildFallbackBanner(),
                     ),
@@ -104,7 +104,7 @@ class ProfessionalShopDetailsPage extends StatelessWidget {
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
+                            color: Colors.black.withValues(alpha: 0.06),
                             blurRadius: 16,
                             offset: const Offset(0, 4),
                           ),
@@ -125,7 +125,7 @@ class ProfessionalShopDetailsPage extends StatelessWidget {
                                       ? Image.network(
                                           shop.logoUrl,
                                           fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) => const Icon(Icons.storefront_rounded, color: AppColors.primary, size: 30),
+                                          errorBuilder: (_, _, _) => const Icon(Icons.storefront_rounded, color: AppColors.primary, size: 30),
                                         )
                                       : const Icon(Icons.storefront_rounded, color: AppColors.primary, size: 30),
                                 ),
@@ -345,7 +345,7 @@ class ProfessionalShopDetailsPage extends StatelessWidget {
                 color: Colors.white,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
+                    color: Colors.black.withValues(alpha: 0.08),
                     blurRadius: 10,
                     offset: const Offset(0, -2),
                   ),

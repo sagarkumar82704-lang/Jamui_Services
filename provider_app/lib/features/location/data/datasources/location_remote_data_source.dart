@@ -21,6 +21,124 @@ class InaccurateLocationException implements Exception {
   String toString() => message;
 }
 
+class StoreCoordinateValidationResult {
+  final bool isValid;
+  final double? latitude;
+  final double? longitude;
+  final String? latitudeError;
+  final String? longitudeError;
+  final String? generalError;
+
+  const StoreCoordinateValidationResult({
+    required this.isValid,
+    this.latitude,
+    this.longitude,
+    this.latitudeError,
+    this.longitudeError,
+    this.generalError,
+  });
+}
+
+class StoreCoordinateValidator {
+  static bool isValidNumbers(double? latitude, double? longitude) {
+    if (latitude == null || longitude == null) return false;
+    if (!latitude.isFinite || !longitude.isFinite) return false;
+    if (latitude < -90.0 || latitude > 90.0) return false;
+    if (longitude < -180.0 || longitude > 180.0) return false;
+    if (latitude == 0.0 && longitude == 0.0) return false;
+    return true;
+  }
+
+  static StoreCoordinateValidationResult validateStrings(
+    String latInput,
+    String lngInput,
+  ) {
+    final cleanLat = latInput.trim();
+    final cleanLng = lngInput.trim();
+
+    String? latErr;
+    String? lngErr;
+
+    if (cleanLat.isEmpty) {
+      latErr = 'Latitude is required (e.g. 24.9195)';
+    }
+    if (cleanLng.isEmpty) {
+      lngErr = 'Longitude is required (e.g. 86.2208)';
+    }
+    if (latErr != null || lngErr != null) {
+      return StoreCoordinateValidationResult(
+        isValid: false,
+        latitudeError: latErr,
+        longitudeError: lngErr,
+      );
+    }
+
+    final parsedLat = double.tryParse(cleanLat);
+    final parsedLng = double.tryParse(cleanLng);
+
+    if (parsedLat == null || !parsedLat.isFinite) {
+      latErr = 'Enter a valid numeric latitude';
+    } else if (parsedLat < -90.0 || parsedLat > 90.0) {
+      latErr = 'Latitude must be between -90 and +90';
+    }
+
+    if (parsedLng == null || !parsedLng.isFinite) {
+      lngErr = 'Enter a valid numeric longitude';
+    } else if (parsedLng < -180.0 || parsedLng > 180.0) {
+      lngErr = 'Longitude must be between -180 and +180';
+    }
+
+    if (latErr != null || lngErr != null) {
+      return StoreCoordinateValidationResult(
+        isValid: false,
+        latitudeError: latErr,
+        longitudeError: lngErr,
+      );
+    }
+
+    if (parsedLat == 0.0 && parsedLng == 0.0) {
+      return const StoreCoordinateValidationResult(
+        isValid: false,
+        generalError: 'Coordinates (0, 0) are not a valid store location.',
+      );
+    }
+
+    return StoreCoordinateValidationResult(
+      isValid: true,
+      latitude: parsedLat,
+      longitude: parsedLng,
+    );
+  }
+}
+
+class StoreReverseGeocodeResult {
+  final double latitude;
+  final double longitude;
+  final String formattedAddress;
+  final String placeName;
+  final String area;
+  final String city;
+  final String district;
+  final String state;
+  final String pincode;
+  final bool isApproximate;
+  final bool isNotFound;
+
+  const StoreReverseGeocodeResult({
+    required this.latitude,
+    required this.longitude,
+    required this.formattedAddress,
+    this.placeName = '',
+    this.area = '',
+    this.city = '',
+    this.district = '',
+    this.state = '',
+    this.pincode = '',
+    this.isApproximate = false,
+    this.isNotFound = false,
+  });
+}
+
 abstract class LocationRemoteDataSource {
   Future<bool> isLocationServiceEnabled();
   Future<LocationPermission> checkPermission();
@@ -29,6 +147,11 @@ abstract class LocationRemoteDataSource {
   Future<bool> openLocationSettings();
   Future<Position> getCurrentPosition();
   Future<ProviderLocationEntity> reverseGeocode(double latitude, double longitude, {double? accuracy, double serviceRadiusKm = 10.0});
+  Future<StoreReverseGeocodeResult> reverseGeocodeForStoreLocation(
+    double latitude,
+    double longitude, {
+    double? accuracy,
+  });
   Future<List<ProviderLocationEntity>> searchPlaces(
     String query, {
     double? providerLat,
@@ -701,6 +824,74 @@ class LocationRemoteDataSourceImpl implements LocationRemoteDataSource {
     );
     _addToCache(cacheKey, resolvedEntity);
     return resolvedEntity;
+  }
+
+  @override
+  Future<StoreReverseGeocodeResult> reverseGeocodeForStoreLocation(
+    double latitude,
+    double longitude, {
+    double? accuracy,
+  }) async {
+    if (!StoreCoordinateValidator.isValidNumbers(latitude, longitude)) {
+      throw FormatException(
+        'Invalid store coordinates: ($latitude, $longitude). Latitude must be -90..+90 and Longitude must be -180..+180.',
+      );
+    }
+
+    final entity = await reverseGeocode(
+      latitude,
+      longitude,
+      accuracy: accuracy,
+    );
+
+    final rawFormatted = entity.formattedAddress.trim();
+    final hasAnyResolvedPart = entity.village.trim().isNotEmpty ||
+        entity.locality.trim().isNotEmpty ||
+        entity.city.trim().isNotEmpty ||
+        entity.district.trim().isNotEmpty ||
+        entity.state.trim().isNotEmpty ||
+        entity.pincode.trim().isNotEmpty ||
+        (entity.placeName.trim().isNotEmpty &&
+            entity.placeName.trim() != 'वर्तमान स्थान');
+
+    if (rawFormatted.isEmpty ||
+        rawFormatted.startsWith('GPS:') ||
+        !hasAnyResolvedPart) {
+      return StoreReverseGeocodeResult(
+        latitude: latitude,
+        longitude: longitude,
+        formattedAddress: 'Address not found',
+        isNotFound: true,
+        isApproximate: false,
+      );
+    }
+
+    final hasFineLocation =
+        entity.village.trim().isNotEmpty || entity.locality.trim().isNotEmpty;
+    final cleanPlaceName = entity.placeName.trim() == 'वर्तमान स्थान'
+        ? ''
+        : entity.placeName.trim();
+    final resolvedArea = entity.village.trim().isNotEmpty
+        ? entity.village.trim()
+        : (entity.locality.trim().isNotEmpty
+            ? entity.locality.trim()
+            : (entity.city.trim().isNotEmpty
+                ? entity.city.trim()
+                : entity.district.trim()));
+
+    return StoreReverseGeocodeResult(
+      latitude: latitude,
+      longitude: longitude,
+      formattedAddress: rawFormatted,
+      placeName: cleanPlaceName,
+      area: resolvedArea,
+      city: entity.city.trim(),
+      district: entity.district.trim(),
+      state: entity.state.trim(),
+      pincode: entity.pincode.trim(),
+      isApproximate: !hasFineLocation,
+      isNotFound: false,
+    );
   }
 
   @override

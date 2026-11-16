@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../location/data/datasources/location_remote_data_source.dart';
 import '../bloc/provider_auth_bloc.dart';
 import '../bloc/provider_auth_event.dart';
@@ -406,8 +407,10 @@ class _ProviderProfileSetupPageState extends State<ProviderProfileSetupPage> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 20.0),
-          child: _subStep == 1 ? _buildStep1ShopDetails() : _buildStep2Location(),
+          child: ResponsiveFormShell(
+            maxWidth: 620,
+            child: _subStep == 1 ? _buildStep1ShopDetails() : _buildStep2Location(),
+          ),
         ),
       ),
     );
@@ -612,10 +615,13 @@ class _ProviderProfileSetupPageState extends State<ProviderProfileSetupPage> {
         const SizedBox(height: 14),
 
         // Permission Status
-        Row(
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 6,
+          runSpacing: 4,
           children: [
             const Text(
-              'Location Permission Status: ',
+              'Location Permission Status:',
               style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
             ),
             Container(

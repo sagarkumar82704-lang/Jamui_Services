@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/firebase/firebase_options.dart';
+import 'core/config/app_environment.dart';
 import 'core/config/emulator_config.dart';
 import 'core/config/gemini_ai_config.dart';
 import 'core/config/maps_config.dart';
@@ -53,18 +54,21 @@ void main() async {
   }
 
   try {
-    final options = EmulatorConfig.getEffectiveOptions(DefaultFirebaseOptions.currentPlatform);
+    AppEnvironmentConfig.logEnvironment('Customer App');
+    final options = DefaultFirebaseOptions.currentPlatform;
     await Firebase.initializeApp(
       options: options,
     );
     isFirebaseInitialized = true;
     debugPrint('🔥 [JAMUI SERVICES] Customer App Firebase Initialized Successfully');
 
-    try {
-      await EmulatorConfig.configureEmulators();
-    } on EmulatorSafetyException catch (e) {
-      runApp(FatalEmulatorHaltApp(message: e.message));
-      return;
+    if (AppEnvironmentConfig.isEmulator) {
+      try {
+        await EmulatorConfig.configureEmulators();
+      } on EmulatorSafetyException catch (e) {
+        runApp(FatalEmulatorHaltApp(message: e.message));
+        return;
+      }
     }
     
     // Initialize Auth Listeners safely
@@ -86,8 +90,10 @@ void main() async {
     ]).catchError((_) => <void>[]));
   } catch (e, stackTrace) {
     isFirebaseInitialized = false;
-    debugPrint('⚠️ [JAMUI SERVICES] Customer App Firebase Initialization Error: $e');
+    debugPrint('🚨 [JAMUI SERVICES] Customer App Environment/Firebase Initialization Error: $e');
     debugPrint('Stack trace: $stackTrace');
+    runApp(FatalEmulatorHaltApp(message: e.toString()));
+    return;
   }
 
   runApp(JamuiServiceCustomerApp(sharedPreferences: sharedPreferences));

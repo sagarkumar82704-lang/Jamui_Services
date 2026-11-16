@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:apna_jamui_provider/core/config/app_environment.dart';
 import 'package:apna_jamui_provider/core/config/remote_config_keys.dart';
 import 'package:apna_jamui_provider/core/utils/app_image_url_resolver.dart';
 
@@ -111,6 +112,28 @@ void main() {
     test('10. RemoteConfigKeys defaults includes image_base_url with empty default', () {
       expect(RemoteConfigKeys.imageBaseUrl, 'image_base_url');
       expect(RemoteConfigKeys.defaults[RemoteConfigKeys.imageBaseUrl], '');
+    });
+
+    test('11. Resolves with AppEnvironmentConfig.defaultImageBaseUrl when override is null', () {
+      AppImageUrlResolver.setOverrideBaseUrl(null);
+      const testKey = 'providers/OXBV2Zink6TvWg5VefHPi53QkyV2/products/prod_1794063348925_72bbeafb.jpg';
+      final resolved = AppImageUrlResolver.resolve(testKey);
+      
+      bool isStaging = false;
+      try {
+        isStaging = AppEnvironmentConfig.isStaging;
+      } catch (_) {}
+
+      // If built with APP_ENV=staging, it authoritatively prepends staging R2 public URL
+      if (isStaging) {
+        expect(
+          resolved,
+          'https://pub-7ffc4239e37248bd84da9d451086bfe6.r2.dev/providers/OXBV2Zink6TvWg5VefHPi53QkyV2/products/prod_1794063348925_72bbeafb.jpg',
+        );
+      } else {
+        // Without APP_ENV define in generic tests, returns the relative key safely without error
+        expect(resolved, testKey);
+      }
     });
   });
 }

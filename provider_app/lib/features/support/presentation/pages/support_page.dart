@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/company_settings_service.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 
 class SupportPage extends StatefulWidget {
@@ -251,105 +252,115 @@ class _SupportPageState extends State<SupportPage> with SingleTickerProviderStat
 
   Widget _buildRaiseTicketTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildCanonicalHelplineCard(),
-          const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.border),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.02),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.support_agent_rounded, color: AppColors.primary, size: 20),
-                      SizedBox(width: 8),
-                      Text(
-                        'नया सहायता टिकट (Create Support Ticket)',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  const Text('समस्या की श्रेणी (Category)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
-                  const SizedBox(height: 6),
-                  DropdownButtonFormField<String>(
-                    value: _selectedCategory,
-                    decoration: InputDecoration(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    items: _categories.map((c) {
-                      return DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 12.5)));
-                    }).toList(),
-                    onChanged: (v) {
-                      if (v != null) setState(() => _selectedCategory = v);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('विषय (Subject)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
-                  const SizedBox(height: 6),
-                  TextFormField(
-                    controller: _subjectController,
-                    decoration: InputDecoration(
-                      hintText: 'उदा. पेआउट बैंक खाते में नहीं आया / ग्राहक ने अनुचित व्यवहार किया',
-                      hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    validator: (val) => (val == null || val.trim().isEmpty) ? 'विषय लिखें' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('समस्या का पूरा विवरण (Message)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
-                  const SizedBox(height: 6),
-                  TextFormField(
-                    controller: _messageController,
-                    maxLines: 4,
-                    decoration: InputDecoration(
-                      hintText: 'समस्या का विस्तार से विवरण यहाँ लिखें...',
-                      hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    validator: (val) => (val == null || val.trim().isEmpty) ? 'विवरण लिखें' : null,
-                  ),
-                  const SizedBox(height: 18),
-                  ElevatedButton(
-                    onPressed: _isSubmitting ? null : _submitComplaint,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size.fromHeight(46),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: _isSubmitting
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                          )
-                        : const Text('टिकट दर्ज करें (Submit Ticket)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+      padding: EdgeInsets.zero,
+      child: ResponsiveContentContainer(
+        maxWidth: 760,
+        padding: ResponsiveLayout.pagePadding(context),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildCanonicalHelplineCard(),
+            const SizedBox(height: 18),
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.02),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
                   ),
                 ],
               ),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.support_agent_rounded, color: AppColors.primary, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'नया सहायता टिकट (Create Support Ticket)',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    const Text('समस्या की श्रेणी (Category)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      initialValue: _selectedCategory,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      items: _categories.map((c) {
+                        return DropdownMenuItem(
+                          value: c,
+                          child: Text(c, style: const TextStyle(fontSize: 12.5), overflow: TextOverflow.ellipsis),
+                        );
+                      }).toList(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => _selectedCategory = v);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('विषय (Subject)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+                    const SizedBox(height: 6),
+                    TextFormField(
+                      controller: _subjectController,
+                      decoration: InputDecoration(
+                        hintText: 'उदा. पेआउट बैंक खाते में नहीं आया / ग्राहक ने अनुचित व्यवहार किया',
+                        hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      validator: (val) => (val == null || val.trim().isEmpty) ? 'विषय लिखें' : null,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('समस्या का पूरा विवरण (Message)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+                    const SizedBox(height: 6),
+                    TextFormField(
+                      controller: _messageController,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: 'समस्या का विस्तार से विवरण यहाँ लिखें...',
+                        hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      validator: (val) => (val == null || val.trim().isEmpty) ? 'विवरण लिखें' : null,
+                    ),
+                    const SizedBox(height: 18),
+                    ElevatedButton(
+                      onPressed: _isSubmitting ? null : _submitComplaint,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(46),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Text('टिकट दर्ज करें (Submit Ticket)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -377,9 +388,11 @@ class _SupportPageState extends State<SupportPage> with SingleTickerProviderStat
                 children: [
                   const Icon(Icons.support_agent_rounded, color: AppColors.primary, size: 20),
                   const SizedBox(width: 8),
-                  Text(
-                    '${settings.companyName} पार्टनर हेल्पलाइन',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.primary),
+                  Expanded(
+                    child: Text(
+                      '${settings.companyName} पार्टनर हेल्पलाइन',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.primary),
+                    ),
                   ),
                 ],
               ),
@@ -472,14 +485,21 @@ class _SupportPageState extends State<SupportPage> with SingleTickerProviderStat
             return bTs.compareTo(aTs);
           });
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: sortedDocs.length,
-          itemBuilder: (context, index) {
-            final doc = sortedDocs[index];
-            final data = doc.data() as Map<String, dynamic>;
-            return _buildTicketCard(doc.id, data);
-          },
+        return SingleChildScrollView(
+          padding: EdgeInsets.zero,
+          child: ResponsiveContentContainer(
+            maxWidth: 960,
+            padding: ResponsiveLayout.pagePadding(context),
+            child: ResponsiveCardGrid(
+              tabletColumns: 2,
+              desktopColumns: 2,
+              largeDesktopColumns: 2,
+              children: sortedDocs.map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return _buildTicketCard(doc.id, data);
+              }).toList(),
+            ),
+          ),
         );
       },
     );
@@ -500,14 +520,14 @@ class _SupportPageState extends State<SupportPage> with SingleTickerProviderStat
     }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 4),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
+            color: Colors.black.withValues(alpha: 0.02),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -524,10 +544,14 @@ class _SupportPageState extends State<SupportPage> with SingleTickerProviderStat
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    ticketId,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.primary),
+                  Flexible(
+                    child: Text(
+                      ticketId,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.primary),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   _buildStatusBadge(status),
                 ],
               ),
@@ -544,14 +568,18 @@ class _SupportPageState extends State<SupportPage> with SingleTickerProviderStat
                 style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
               const Divider(height: 18),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
                 children: [
                   Text(
                     category,
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
                   ),
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       if (messages.isNotEmpty) ...[
                         Icon(Icons.forum_outlined, size: 14, color: Colors.blue.shade700),

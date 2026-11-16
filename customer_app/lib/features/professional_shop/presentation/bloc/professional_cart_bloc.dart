@@ -7,26 +7,55 @@ import '../../domain/entities/professional_shop_entity.dart';
 class CartItemModel extends Equatable {
   final ProfessionalProductEntity product;
   final int quantity;
+  final String? variantId;
+  final String? variantTitle;
+  final String? sku;
+  final double? priceOverride;
+  final double? mrpOverride;
+  final String? selectedImageUrl;
 
   const CartItemModel({
     required this.product,
     required this.quantity,
+    this.variantId,
+    this.variantTitle,
+    this.sku,
+    this.priceOverride,
+    this.mrpOverride,
+    this.selectedImageUrl,
   });
 
-  double get itemTotal => product.sellingPrice * quantity;
-  double get itemSavings => (product.regularPrice > product.sellingPrice)
-      ? (product.regularPrice - product.sellingPrice) * quantity
+  String get cartKey => '${product.id}_${variantId ?? ''}';
+  double get unitSellingPrice => priceOverride ?? product.sellingPrice;
+  double get unitRegularPrice => mrpOverride ?? product.regularPrice;
+  double get itemTotal => unitSellingPrice * quantity;
+  double get itemSavings => (unitRegularPrice > unitSellingPrice)
+      ? (unitRegularPrice - unitSellingPrice) * quantity
       : 0.0;
 
-  CartItemModel copyWith({int? quantity}) {
+  CartItemModel copyWith({
+    int? quantity,
+    String? variantId,
+    String? variantTitle,
+    String? sku,
+    double? priceOverride,
+    double? mrpOverride,
+    String? selectedImageUrl,
+  }) {
     return CartItemModel(
       product: product,
       quantity: quantity ?? this.quantity,
+      variantId: variantId ?? this.variantId,
+      variantTitle: variantTitle ?? this.variantTitle,
+      sku: sku ?? this.sku,
+      priceOverride: priceOverride ?? this.priceOverride,
+      mrpOverride: mrpOverride ?? this.mrpOverride,
+      selectedImageUrl: selectedImageUrl ?? this.selectedImageUrl,
     );
   }
 
   @override
-  List<Object?> get props => [product.id, quantity];
+  List<Object?> get props => [product.id, variantId, quantity, priceOverride];
 }
 
 // --- Cart Events ---
@@ -39,21 +68,41 @@ abstract class ProfessionalCartEvent extends Equatable {
 class AddToCartEvent extends ProfessionalCartEvent {
   final ProfessionalShopEntity shop;
   final ProfessionalProductEntity product;
+  final String? variantId;
+  final String? variantTitle;
+  final String? sku;
+  final double? priceOverride;
+  final double? mrpOverride;
+  final String? selectedImageUrl;
 
-  const AddToCartEvent({required this.shop, required this.product});
+  const AddToCartEvent({
+    required this.shop,
+    required this.product,
+    this.variantId,
+    this.variantTitle,
+    this.sku,
+    this.priceOverride,
+    this.mrpOverride,
+    this.selectedImageUrl,
+  });
 
   @override
-  List<Object?> get props => [shop.id, product.id];
+  List<Object?> get props => [shop.id, product.id, variantId];
 }
 
 class UpdateQuantityEvent extends ProfessionalCartEvent {
   final String productId;
+  final String? variantId;
   final int delta; // +1 or -1
 
-  const UpdateQuantityEvent({required this.productId, required this.delta});
+  const UpdateQuantityEvent({
+    required this.productId,
+    this.variantId,
+    required this.delta,
+  });
 
   @override
-  List<Object?> get props => [productId, delta];
+  List<Object?> get props => [productId, variantId, delta];
 }
 
 class SetFulfillmentModeEvent extends ProfessionalCartEvent {
@@ -68,11 +117,26 @@ class SetFulfillmentModeEvent extends ProfessionalCartEvent {
 class ConfirmClearAndSwitchShopEvent extends ProfessionalCartEvent {
   final ProfessionalShopEntity newShop;
   final ProfessionalProductEntity newProduct;
+  final String? variantId;
+  final String? variantTitle;
+  final String? sku;
+  final double? priceOverride;
+  final double? mrpOverride;
+  final String? selectedImageUrl;
 
-  const ConfirmClearAndSwitchShopEvent({required this.newShop, required this.newProduct});
+  const ConfirmClearAndSwitchShopEvent({
+    required this.newShop,
+    required this.newProduct,
+    this.variantId,
+    this.variantTitle,
+    this.sku,
+    this.priceOverride,
+    this.mrpOverride,
+    this.selectedImageUrl,
+  });
 
   @override
-  List<Object?> get props => [newShop.id, newProduct.id];
+  List<Object?> get props => [newShop.id, newProduct.id, variantId];
 }
 
 class ClearCartEvent extends ProfessionalCartEvent {}
@@ -112,11 +176,22 @@ class ProfessionalCartState extends Equatable {
 
   double get grandTotal => subtotal + deliveryFee;
 
-  int getProductQuantity(String productId) {
-    for (final item in items) {
-      if (item.product.id == productId) return item.quantity;
+  int getProductQuantity(String productId, [String? variantId]) {
+    if (variantId != null) {
+      for (final item in items) {
+        if (item.product.id == productId && item.variantId == variantId) {
+          return item.quantity;
+        }
+      }
+      return 0;
     }
-    return 0;
+    int total = 0;
+    for (final item in items) {
+      if (item.product.id == productId) {
+        total += item.quantity;
+      }
+    }
+    return total;
   }
 
   ProfessionalCartState copyWith({
@@ -171,14 +246,24 @@ class ProfessionalCartBloc extends Bloc<ProfessionalCartEvent, ProfessionalCartS
     }
 
     final currentItems = List<CartItemModel>.from(state.items);
-    final index = currentItems.indexWhere((i) => i.product.id == event.product.id);
+    final index = currentItems.indexWhere((i) =>
+        i.product.id == event.product.id && i.variantId == event.variantId);
 
     if (index >= 0) {
       currentItems[index] = currentItems[index].copyWith(
         quantity: currentItems[index].quantity + 1,
       );
     } else {
-      currentItems.add(CartItemModel(product: event.product, quantity: 1));
+      currentItems.add(CartItemModel(
+        product: event.product,
+        quantity: 1,
+        variantId: event.variantId,
+        variantTitle: event.variantTitle,
+        sku: event.sku,
+        priceOverride: event.priceOverride,
+        mrpOverride: event.mrpOverride,
+        selectedImageUrl: event.selectedImageUrl,
+      ));
     }
 
     emit(state.copyWith(
@@ -190,7 +275,11 @@ class ProfessionalCartBloc extends Bloc<ProfessionalCartEvent, ProfessionalCartS
 
   void _onUpdateQuantity(UpdateQuantityEvent event, Emitter<ProfessionalCartState> emit) {
     final currentItems = List<CartItemModel>.from(state.items);
-    final index = currentItems.indexWhere((i) => i.product.id == event.productId);
+    final index = currentItems.indexWhere((i) {
+      if (i.product.id != event.productId) return false;
+      if (event.variantId != null) return i.variantId == event.variantId;
+      return true;
+    });
 
     if (index >= 0) {
       final newQty = currentItems[index].quantity + event.delta;
@@ -215,7 +304,18 @@ class ProfessionalCartBloc extends Bloc<ProfessionalCartEvent, ProfessionalCartS
   void _onConfirmClearAndSwitch(ConfirmClearAndSwitchShopEvent event, Emitter<ProfessionalCartState> emit) {
     emit(ProfessionalCartState(
       currentShop: event.newShop,
-      items: [CartItemModel(product: event.newProduct, quantity: 1)],
+      items: [
+        CartItemModel(
+          product: event.newProduct,
+          quantity: 1,
+          variantId: event.variantId,
+          variantTitle: event.variantTitle,
+          sku: event.sku,
+          priceOverride: event.priceOverride,
+          mrpOverride: event.mrpOverride,
+          selectedImageUrl: event.selectedImageUrl,
+        ),
+      ],
       fulfillmentMode: state.fulfillmentMode,
       hasShopConflict: false,
     ));

@@ -19,7 +19,14 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
     'totalOrders': 0,
     'totalSales': 0.0,
   };
+  List<Map<String, dynamic>> _weeklySales = [];
+  Map<String, int> _orderStatusBreakdown = {
+    'delivered': 0, 'preparing': 0, 'pending': 0, 'cancelled': 0, 'total': 0,
+  };
   bool _isLoading = true;
+  String? _metricsError;
+  String? _chartError;
+  String? _breakdownError;
 
   @override
   void initState() {
@@ -68,12 +75,35 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
   }
 
   Future<void> _loadMetrics() async {
-    final m = await _dataSource.fetchDashboardMetrics();
+    setState(() {
+      _isLoading = true;
+      _metricsError = null;
+      _chartError = null;
+      _breakdownError = null;
+    });
+
+    // Run each fetch independently so one failure does not blank out other metrics
+    final metricsFuture = _dataSource.fetchDashboardMetrics().then((m) {
+      if (mounted) setState(() => _metrics = m);
+    }).catchError((e) {
+      if (mounted) setState(() => _metricsError = 'Failed to load KPIs: ${e.toString().split('\n').first}');
+    });
+
+    final weeklyFuture = _dataSource.fetchWeeklySalesData().then((w) {
+      if (mounted) setState(() => _weeklySales = w);
+    }).catchError((e) {
+      if (mounted) setState(() => _chartError = 'Failed to load weekly trends: ${e.toString().split('\n').first}');
+    });
+
+    final breakdownFuture = _dataSource.fetchOrderStatusBreakdown().then((b) {
+      if (mounted) setState(() => _orderStatusBreakdown = b);
+    }).catchError((e) {
+      if (mounted) setState(() => _breakdownError = 'Failed to load breakdown: ${e.toString().split('\n').first}');
+    });
+
+    await Future.wait([metricsFuture, weeklyFuture, breakdownFuture]);
     if (mounted) {
-      setState(() {
-        _metrics = m;
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
     }
   }
 
@@ -87,6 +117,32 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (_isLoading) const LinearProgressIndicator(),
+            if (_metricsError != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFEF4444)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, color: Color(0xFFDC2626), size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _metricsError!,
+                        style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 13),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _loadMetrics,
+                      child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              ),
             // Top Page Header
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -177,20 +233,53 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
                             color: const Color(0xFFF8FAFC),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Center(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                _buildBarColumn('Oct 1', 0.4),
-                                _buildBarColumn('Oct 8', 0.65),
-                                _buildBarColumn('Oct 15', 0.5),
-                                _buildBarColumn('Oct 22', 0.85),
-                                _buildBarColumn('Oct 29', 0.7),
-                                _buildBarColumn('Nov 5', 0.95),
-                              ],
-                            ),
-                          ),
+                          child: _chartError != null
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          _chartError!,
+                                          style: const TextStyle(fontSize: 12, color: Color(0xFFDC2626)),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        const SizedBox(height: 6),
+                                        TextButton(
+                                          onPressed: _loadMetrics,
+                                          child: const Text('Retry Chart', style: TextStyle(fontSize: 11)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              : _weeklySales.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                        'No delivered sales data for the last 7 days.',
+                                        style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                                      ),
+                                    )
+                                  : () {
+                                      final maxSales = _weeklySales
+                                          .map((e) => (e['sales'] as num).toDouble())
+                                          .fold(0.0, (a, b) => a > b ? a : b);
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          children: _weeklySales.map((entry) {
+                                            final sales = (entry['sales'] as num).toDouble();
+                                            final pct = maxSales > 0 ? (sales / maxSales).clamp(0.04, 1.0) : 0.04;
+                                            final parts = (entry['label'] as String).split(' ');
+                                            final label = parts.length >= 2 ? '${parts[0]}\n${parts[1]}' : entry['label'] as String;
+                                            return _buildBarColumn(label, pct, sales);
+                                          }).toList(),
+                                        ),
+                                      );
+                                    }(),
                         ),
                       ],
                     ),
@@ -213,39 +302,69 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
                       children: [
                         const Text('Orders Overview', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
                         const SizedBox(height: 16),
-                        Center(
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              SizedBox(
-                                width: 130,
-                                height: 130,
-                                child: CircularProgressIndicator(
-                                  value: 0.78,
-                                  strokeWidth: 16,
-                                  backgroundColor: const Color(0xFFE2E8F0),
-                                  color: const Color(0xFF059669),
+                        _breakdownError != null
+                            ? Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        _breakdownError!,
+                                        style: const TextStyle(fontSize: 12, color: Color(0xFFDC2626)),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      TextButton(
+                                        onPressed: _loadMetrics,
+                                        child: const Text('Retry', style: TextStyle(fontSize: 11)),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              Column(
-                                mainAxisSize: MainAxisSize.min,
+                              )
+                            : Column(
                                 children: [
-                                  Text('${_metrics['totalOrders']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
-                                  const Text('Total', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                                  Center(
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        SizedBox(
+                                          width: 130,
+                                          height: 130,
+                                          child: () {
+                                            final total = _orderStatusBreakdown['total'] ?? 0;
+                                            final delivered = _orderStatusBreakdown['delivered'] ?? 0;
+                                            final deliveredPct = total > 0 ? delivered / total : 0.0;
+                                            return CircularProgressIndicator(
+                                              value: deliveredPct.clamp(0.0, 1.0),
+                                              strokeWidth: 16,
+                                              backgroundColor: const Color(0xFFE2E8F0),
+                                              color: const Color(0xFF059669),
+                                            );
+                                          }(),
+                                        ),
+                                        Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text('${_metrics['totalOrders']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
+                                            const Text('Total', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                                    children: [
+                                      _buildLegendItem('Delivered (${_orderStatusBreakdown['delivered'] ?? 0})', const Color(0xFF059669)),
+                                      _buildLegendItem('Preparing (${_orderStatusBreakdown['preparing'] ?? 0})', const Color(0xFF0284C7)),
+                                      _buildLegendItem('Pending (${_orderStatusBreakdown['pending'] ?? 0})', const Color(0xFFD97706)),
+                                    ],
+                                  ),
                                 ],
                               ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _buildLegendItem('Delivered', const Color(0xFF059669)),
-                            _buildLegendItem('Preparing', const Color(0xFF0284C7)),
-                            _buildLegendItem('Pending', const Color(0xFFD97706)),
-                          ],
-                        ),
                       ],
                     ),
                   ),
@@ -601,22 +720,60 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
                             return ListView.separated(
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
-                              itemCount: orders.take(4).length,
+                              itemCount: orders.take(6).length,
                               separatorBuilder: (_, __) => const Divider(height: 12),
                               itemBuilder: (ctx, i) {
                                 final o = orders[i];
-                                return Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                final platformOrderNum = o['orderNumber'] ?? o['orderId'] ?? o['id'];
+                                final sellerOrderNum = (o['sellerOrderNumber'] as String?)?.trim();
+                                return InkWell(
+                                  onTap: () => _showAdminOrderDetailsDialog(o),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Text('#${o['id']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
-                                        Text(o['shopName'] ?? '', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  if (sellerOrderNum != null && sellerOrderNum.isNotEmpty) ...[
+                                                    Container(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                      margin: const EdgeInsets.only(right: 6),
+                                                      decoration: BoxDecoration(
+                                                        color: const Color(0xFF0F766E).withValues(alpha: 0.1),
+                                                        borderRadius: BorderRadius.circular(4),
+                                                        border: Border.all(color: const Color(0xFF0F766E).withValues(alpha: 0.3)),
+                                                      ),
+                                                      child: Text(
+                                                        sellerOrderNum,
+                                                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF0F766E)),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                  Flexible(
+                                                    child: Text(
+                                                      '#$platformOrderNum',
+                                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(o['shopName'] ?? '', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text('₹${o['totalAmount']}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF059669), fontSize: 13)),
                                       ],
                                     ),
-                                    Text('₹${o['totalAmount']}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF059669), fontSize: 13)),
-                                  ],
+                                  ),
                                 );
                               },
                             );
@@ -631,6 +788,132 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
           ],
         ),
       ),
+    );
+  }
+
+  void _showAdminOrderDetailsDialog(Map<String, dynamic> o) {
+    final docId = o['id'] ?? o['orderId'] ?? '';
+    final platformOrderNum = o['orderNumber'] ?? o['orderId'] ?? docId;
+    final sellerOrderNum = (o['sellerOrderNumber'] as String?)?.trim();
+    final channelId = (o['channelId'] as String?)?.trim() ?? 'JAMUI_SERVICES';
+    final shopName = (o['shopName'] as String?)?.trim() ?? 'Shop';
+    final custName = (o['customerName'] as String?)?.trim() ?? '';
+    final custPhone = (o['customerPhone'] as String?)?.trim() ?? '';
+    final items = (o['items'] as List<dynamic>?) ?? [];
+    final subtotal = (o['subtotal'] as num?)?.toInt() ?? 0;
+    final deliveryFee = (o['deliveryFee'] as num?)?.toInt() ?? 0;
+    final total = (o['totalAmount'] as num?)?.toInt() ?? (subtotal + deliveryFee);
+    final status = (o['status'] as String?)?.trim() ?? 'placed';
+    final deliveryMethod = (o['deliveryMethod'] as String?) ?? (o['fulfillmentType'] as String?) ?? 'delivery';
+    final deliveryAddress = o['deliveryAddress'] as Map<String, dynamic>?;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Order #$platformOrderNum', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    if (sellerOrderNum != null && sellerOrderNum.isNotEmpty)
+                      Text('Store Order: $sellerOrderNum', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF0F766E))),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(status.toUpperCase(), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF475569))),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Shop: $shopName', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        Text('Channel: $channelId', style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
+                        const SizedBox(height: 2),
+                        SelectableText('Internal Firestore ID: $docId', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontFamily: 'monospace')),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (custName.isNotEmpty || custPhone.isNotEmpty) ...[
+                    const Text('Customer', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    Text('$custName ${custPhone.isNotEmpty ? "($custPhone)" : ""}', style: const TextStyle(fontSize: 12.5)),
+                    if (deliveryMethod == 'delivery' && deliveryAddress != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        '${deliveryAddress['fullAddress'] ?? deliveryAddress['address'] ?? ''}'
+                        '${deliveryAddress['landmark'] != null ? ", Near: ${deliveryAddress['landmark']}" : ""}',
+                        style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                  ],
+                  const Text('Items Breakdown', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  ...items.map((it) {
+                    final map = it as Map<String, dynamic>;
+                    final name = map['name'] ?? map['title'] ?? 'Item';
+                    final qty = map['quantity'] ?? 1;
+                    final price = (map['price'] as num?)?.toInt() ?? 0;
+                    final itemTotal = (map['itemTotal'] as num?)?.toInt() ?? (price * (qty as int));
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(child: Text('$name x $qty', style: const TextStyle(fontSize: 12))),
+                          Text('₹$itemTotal', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    );
+                  }),
+                  const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Total Amount', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold)),
+                      Text('₹$total', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Color(0xFF059669))),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -664,21 +947,24 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
     );
   }
 
-  Widget _buildBarColumn(String label, double pct) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Container(
-          width: 24,
-          height: 100 * pct,
-          decoration: BoxDecoration(
-            color: const Color(0xFF4F46E5),
-            borderRadius: BorderRadius.circular(6),
+  Widget _buildBarColumn(String label, double pct, [double? salesValue]) {
+    return Tooltip(
+      message: salesValue != null ? '₹${salesValue.toInt()}' : '',
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          Container(
+            width: 24,
+            height: 100 * pct,
+            decoration: BoxDecoration(
+              color: const Color(0xFF4F46E5),
+              borderRadius: BorderRadius.circular(6),
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(label, style: const TextStyle(fontSize: 10.5, color: Colors.grey)),
-      ],
+          const SizedBox(height: 6),
+          Text(label, style: const TextStyle(fontSize: 10.5, color: Colors.grey), textAlign: TextAlign.center),
+        ],
+      ),
     );
   }
 
@@ -832,8 +1118,9 @@ class _ProfessionalAdminDashboardPageState extends State<ProfessionalAdminDashbo
             _buildInspectorRow(
               'Payment Status:',
               (pay['status'] ?? 'verified').toString().toUpperCase(),
-              valueColor: (pay['status'] == 'captured' || pay['status'] == 'verified') ? const Color(0xFF059669) : const Color(0xFFD97706),
+              valueColor: (pay['status'] == 'captured' || pay['status'] == 'verified' || pay['status'] == 'activated') ? const Color(0xFF059669) : const Color(0xFFD97706),
             ),
+            _buildInspectorRow('Plan & Amount:', '${pay['planName'] ?? 'Basic'} — ₹${pay['amount'] ?? 0}'),
             _buildInspectorRow('Payment ID:', (pay['paymentId'] ?? pay['razorpay_payment_id'] ?? 'N/A').toString()),
             _buildInspectorRow('Razorpay Order:', (pay['orderId'] ?? pay['razorpay_order_id'] ?? 'N/A').toString()),
             _buildInspectorRow('Verified At:', _formatTimestamp(pay['verifiedAt'] ?? pay['createdAt'])),

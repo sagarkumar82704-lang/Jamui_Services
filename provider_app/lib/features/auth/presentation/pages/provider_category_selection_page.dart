@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../categories/data/models/service_category_model.dart';
 import '../bloc/provider_auth_bloc.dart';
 import 'provider_profile_setup_page.dart';
@@ -270,10 +271,12 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                     ),
                   )
                 : SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 20.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                    child: ResponsiveContentContainer(
+                      maxWidth: 860,
+                      padding: ResponsiveLayout.pagePadding(context, vertical: 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                         const Text(
                           'Select Business Category',
                           style: TextStyle(
@@ -322,9 +325,11 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                           children: [
                             Icon(Icons.handyman_outlined, color: _themeGreen, size: 20),
                             SizedBox(width: 8),
-                            Text(
-                              'Standard Service Categories',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                            Expanded(
+                              child: Text(
+                                'Standard Service Categories',
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                              ),
                             ),
                           ],
                         ),
@@ -335,12 +340,13 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                         ),
                         const SizedBox(height: 10),
 
-                        ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _normalCategories.length,
-                          itemBuilder: (context, index) {
-                            final cat = _normalCategories[index];
+                        ResponsiveCardGrid(
+                          tabletColumns: 2,
+                          desktopColumns: 2,
+                          largeDesktopColumns: 2,
+                          spacing: 12,
+                          runSpacing: 0,
+                          children: _normalCategories.map((cat) {
                             final isSelected = _selectedCategoryId == cat.id && _selectedCategoryType == 'general';
 
                             return _buildCategoryCard(
@@ -352,7 +358,7 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                               tag: 'STANDARD',
                               tagColor: Colors.grey.shade700,
                             );
-                          },
+                          }).toList(),
                         ),
 
                         // ================= SECTION 2: NORMAL PREMIUM CATEGORIES =================
@@ -362,9 +368,11 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                             children: [
                               Icon(Icons.workspace_premium, color: Color(0xFFD4AF37), size: 20),
                               SizedBox(width: 8),
-                              Text(
-                                'Premium Categories',
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                              Expanded(
+                                child: Text(
+                                  'Premium Categories',
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                                ),
                               ),
                             ],
                           ),
@@ -375,12 +383,13 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                           ),
                           const SizedBox(height: 10),
 
-                          ListView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: _premiumCategories.length,
-                            itemBuilder: (context, index) {
-                              final cat = _premiumCategories[index];
+                          ResponsiveCardGrid(
+                            tabletColumns: 2,
+                            desktopColumns: 2,
+                            largeDesktopColumns: 2,
+                            spacing: 12,
+                            runSpacing: 0,
+                            children: _premiumCategories.map((cat) {
                               final isSelected = _selectedCategoryId == cat.id && _selectedCategoryType == 'premium';
 
                               return _buildCategoryCard(
@@ -392,7 +401,7 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                                 tag: 'PREMIUM',
                                 tagColor: const Color(0xFFD4AF37),
                               );
-                            },
+                            }).toList(),
                           ),
                         ],
 
@@ -402,9 +411,11 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                           children: [
                             Icon(Icons.storefront_rounded, color: _themeGreen, size: 20),
                             SizedBox(width: 8),
-                            Text(
-                              'Professional (Pro) Categories',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                            Expanded(
+                              child: Text(
+                                'Professional (Pro) Categories',
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                              ),
                             ),
                           ],
                         ),
@@ -438,12 +449,13 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                             ),
                           )
                         else
-                          ListView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: _professionalCategories.length,
-                            itemBuilder: (context, index) {
-                              final cat = _professionalCategories[index];
+                          ResponsiveCardGrid(
+                            tabletColumns: 2,
+                            desktopColumns: 2,
+                            largeDesktopColumns: 2,
+                            spacing: 12,
+                            runSpacing: 0,
+                            children: _professionalCategories.map((cat) {
                               final catId = (cat['id'] as String?) ?? '';
                               final titleEng = (cat['titleEnglish'] as String?) ??
                                   (cat['name'] as String?) ??
@@ -463,7 +475,7 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
                                 tag: 'PRO',
                                 tagColor: _themeGreen,
                               );
-                            },
+                            }).toList(),
                           ),
 
                         const SizedBox(height: 28),
@@ -496,6 +508,7 @@ class _ProviderCategorySelectionPageState extends State<ProviderCategorySelectio
 
                         const SizedBox(height: 16),
                       ],
+                    ),
                     ),
                   ),
       ),

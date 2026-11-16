@@ -13,7 +13,6 @@ import '../../../../core/widgets/provider_avatar_widget.dart';
 import '../../../../core/widgets/provider_category_badge.dart';
 import '../../../auth/presentation/bloc/customer_auth_bloc.dart';
 import '../../../auth/presentation/bloc/customer_auth_state.dart';
-import '../../../auth/presentation/widgets/phone_account_migration_banner.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -253,6 +252,8 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
           latitude: result.latitude,
           longitude: result.longitude,
           areaName: areaName,
+          village: result.village,
+          block: result.block,
         ),
       );
     }
@@ -851,6 +852,8 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
                     latitude: locState.location.latitude,
                     longitude: locState.location.longitude,
                     areaName: locState.location.placeName,
+                    village: locState.location.village,
+                    block: locState.location.block,
                   ),
                 );
                 _fetchProfessionalData(
@@ -873,6 +876,8 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
                   customerLatitude: state.customerLatitude,
                   customerLongitude: state.customerLongitude,
                   customerAreaName: state.customerAreaName,
+                  customerVillage: state.customerVillage,
+                  customerBlock: state.customerBlock,
                 ),
               );
             } else {
@@ -895,9 +900,6 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen>
                     decision: _updateDecision!,
                     onDismiss: () => setState(() => _updateDecision = null),
                   ),
-
-                // Account Migration Banner for existing Phone Auth users
-                const PhoneAccountMigrationBanner(),
 
                 // 1. Prominent Search Bar directly below App Bar
                 const AISmartSearchBar(

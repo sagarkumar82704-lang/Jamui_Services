@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/r2_upload_service.dart';
 import '../../../../core/utils/app_image_utils.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../../core/widgets/photo_source_picker.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 import '../../data/models/provider_listing_model.dart';
@@ -360,64 +361,76 @@ class _AddEditListingPageState extends State<AddEditListingPage> {
         elevation: 0.5,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Listing Type Selector (Service, Product, Job)
-              const Text('लिस्टिंग प्रकार (Listing Type) *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-              const SizedBox(height: 8),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'service', label: Text('सर्विस (Service)'), icon: Icon(Icons.handyman_outlined, size: 16)),
-                  ButtonSegment(value: 'product', label: Text('उत्पाद (Product)'), icon: Icon(Icons.shopping_bag_outlined, size: 16)),
-                  ButtonSegment(value: 'job', label: Text('नौकरी (Job)'), icon: Icon(Icons.work_outline, size: 16)),
-                ],
-                selected: {_listingType},
-                onSelectionChanged: (set) => setState(() => _listingType = set.first),
-              ),
-              const SizedBox(height: 16),
-
-              // Title
-              TextFormField(
-                controller: _titleController,
-                decoration: InputDecoration(
-                  labelText: _listingType == 'job' ? 'जॉब रोल / पद का नाम *' : 'शीर्षक / सर्विस का नाम *',
-                  hintText: _listingType == 'job' ? 'उदा: इलेक्ट्रीशियन हेल्पर आवश्यक' : 'उदा: RO वाटर प्यूरीफायर सर्विसिंग',
-                  border: const OutlineInputBorder(),
-                  isDense: true,
+        child: ResponsiveFormShell(
+          maxWidth: 680,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Listing Type Selector (Service, Product, Job)
+                const Text('लिस्टिंग प्रकार (Listing Type) *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'service', label: Text('सर्विस (Service)'), icon: Icon(Icons.handyman_outlined, size: 16)),
+                        ButtonSegment(value: 'product', label: Text('उत्पाद (Product)'), icon: Icon(Icons.shopping_bag_outlined, size: 16)),
+                        ButtonSegment(value: 'job', label: Text('नौकरी (Job)'), icon: Icon(Icons.work_outline, size: 16)),
+                      ],
+                      selected: {_listingType},
+                      onSelectionChanged: (set) => setState(() => _listingType = set.first),
+                    ),
+                  ),
                 ),
-                validator: (val) => (val == null || val.trim().isEmpty) ? 'शीर्षक अनिवार्य है' : null,
-              ),
-              const SizedBox(height: 14),
+                const SizedBox(height: 16),
 
-              // Category Selector
-              if (_isLoadingCategories)
-                const LinearProgressIndicator()
-              else
-                DropdownButtonFormField<String>(
-                  initialValue: _selectedCategoryId,
-                  decoration: const InputDecoration(
-                    labelText: 'सर्विस श्रेणी (Category) *',
-                    border: OutlineInputBorder(),
+                // Title
+                TextFormField(
+                  controller: _titleController,
+                  decoration: InputDecoration(
+                    labelText: _listingType == 'job' ? 'जॉब रोल / पद का नाम *' : 'शीर्षक / सर्विस का नाम *',
+                    hintText: _listingType == 'job' ? 'उदा: इलेक्ट्रीशियन हेल्पर आवश्यक' : 'उदा: RO वाटर प्यूरीफायर सर्विसिंग',
+                    border: const OutlineInputBorder(),
                     isDense: true,
                   ),
-                  items: _categories.map((c) {
-                    return DropdownMenuItem<String>(
-                      value: c['id'].toString(),
-                      child: Text(c['name'].toString()),
-                    );
-                  }).toList(),
-                  onChanged: (val) {
-                    setState(() {
-                      _selectedCategoryId = val;
-                      final match = _categories.firstWhere((c) => c['id'] == val, orElse: () => {'name': ''});
-                      _selectedCategoryName = match['name'];
-                    });
-                  },
+                  validator: (val) => (val == null || val.trim().isEmpty) ? 'शीर्षक अनिवार्य है' : null,
                 ),
+                const SizedBox(height: 14),
+
+                // Category Selector
+                if (_isLoadingCategories)
+                  const LinearProgressIndicator()
+                else
+                  DropdownButtonFormField<String>(
+                    initialValue: _selectedCategoryId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'सर्विस श्रेणी (Category) *',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: _categories.map((c) {
+                      return DropdownMenuItem<String>(
+                        value: c['id'].toString(),
+                        child: Text(
+                          c['name'].toString(),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      setState(() {
+                        _selectedCategoryId = val;
+                        final match = _categories.firstWhere((c) => c['id'] == val, orElse: () => {'name': ''});
+                        _selectedCategoryName = match['name'];
+                      });
+                    },
+                  ),
               const SizedBox(height: 14),
 
               // Price / Salary
@@ -555,6 +568,7 @@ class _AddEditListingPageState extends State<AddEditListingPage> {
                       ),
               ),
             ],
+          ),
           ),
         ),
       ),

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/web_host_bridge.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../../core/widgets/app_logo.dart';
 import '../bloc/provider_auth_bloc.dart';
 import '../bloc/provider_auth_event.dart';
@@ -193,11 +194,12 @@ class _ProviderLoginPageState extends State<ProviderLoginPage> {
 
             return Center(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+                child: ResponsiveFormShell(
+                  maxWidth: 460,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                     if (Navigator.canPop(context))
                       Align(
                         alignment: Alignment.centerLeft,
@@ -413,8 +415,9 @@ class _ProviderLoginPageState extends State<ProviderLoginPage> {
                     const SizedBox(height: 36),
 
                     // New Registration Navigation matching Reference Image
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         const Text(
                           'New Seller? ',
@@ -444,6 +447,7 @@ class _ProviderLoginPageState extends State<ProviderLoginPage> {
                       ],
                     ),
                   ],
+                ),
                 ),
               ),
             );

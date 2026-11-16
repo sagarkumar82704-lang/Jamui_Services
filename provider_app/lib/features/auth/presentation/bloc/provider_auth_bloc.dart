@@ -27,11 +27,8 @@ class ProviderAuthBloc extends Bloc<ProviderAuthEvent, ProviderAuthState> {
     on<ToggleAvailabilityEvent>(_onToggleAvailability);
     on<SubmitKycEvent>(_onSubmitKyc);
     on<UploadProfilePhotoEvent>(_onUploadProfilePhoto);
-    on<SendProviderOtpEvent>(_onSendProviderOtp);
-    on<VerifyProviderOtpEvent>(_onVerifyProviderOtp);
     on<SubmitCustomServiceApplicationEvent>(_onSubmitCustomServiceApplication);
     on<SubmitCategoryChangeRequestEvent>(_onSubmitCategoryChangeRequest);
-    on<MigratePhoneAccountEvent>(_onMigratePhoneAccount);
   }
 
   void _startWatchingProfile(String uid) {
@@ -520,103 +517,6 @@ class ProviderAuthBloc extends Bloc<ProviderAuthEvent, ProviderAuthState> {
     }
   }
 
-  Future<void> _onSendProviderOtp(
-    SendProviderOtpEvent event,
-    Emitter<ProviderAuthState> emit,
-  ) async {
-    emit(ProviderAuthLoading());
-
-    // 1. Strict Check: Mobile number must belong to an already registered provider in Firestore
-    try {
-      final registered = await providerRepository.findRegisteredProviderByPhone(event.phoneNumber);
-      if (registered == null || registered.businessName.trim().isEmpty || registered.primaryCategoryId.trim().isEmpty) {
-        emit(ProviderNotRegisteredErrorState(
-          userId: '',
-          phoneNumber: event.phoneNumber,
-          message: 'इस मोबाइल नंबर (${event.phoneNumber}) से कोई प्रोवाइडर खाता पंजीकृत नहीं है। कृपया नया रजिस्ट्रेशन करें।',
-        ));
-        return;
-      }
-    } catch (e) {
-      // In case of transient lookup issue, continue with verification
-    }
-
-    final completer = Completer<void>();
-
-    try {
-      await providerRepository.sendPhoneOtp(
-        phoneNumber: event.phoneNumber,
-        onCodeSent: (verificationId, resendToken) {
-          if (!completer.isCompleted) completer.complete();
-          emit(ProviderOtpSentState(
-            verificationId: verificationId,
-            phoneNumber: event.phoneNumber,
-          ));
-        },
-        onError: (errorMessage) {
-          if (!completer.isCompleted) completer.complete();
-          emit(ProviderAuthError(errorMessage));
-        },
-        onVerificationCompleted: (credential) async {
-          if (!completer.isCompleted) completer.complete();
-          add(CheckAuthStatusEvent());
-        },
-      );
-
-      // Watchdog timeout to prevent indefinite spinner if Firebase callbacks hang
-      await completer.future.timeout(const Duration(seconds: 25), onTimeout: () {
-        emit(const ProviderAuthError('OTP अनुरोध में अधिक समय लगा। कृपया इंटरनेट जांचें व पुनः प्रयास करें।'));
-      });
-    } catch (e) {
-      if (!completer.isCompleted) completer.complete();
-      emit(ProviderAuthError(_formatAuthException(e)));
-    }
-  }
-
-  Future<void> _onVerifyProviderOtp(
-    VerifyProviderOtpEvent event,
-    Emitter<ProviderAuthState> emit,
-  ) async {
-    emit(ProviderAuthLoading());
-    try {
-      final userCred = await providerRepository.verifyOtpCode(
-        verificationId: event.verificationId,
-        smsCode: event.smsCode,
-      );
-      final user = userCred.user;
-      if (user != null) {
-        ProviderProfileEntity? profile = await providerRepository.getProfile(user.uid);
-        if (profile == null && user.phoneNumber != null && user.phoneNumber!.isNotEmpty) {
-          profile = await providerRepository.findRegisteredProviderByPhone(user.phoneNumber!);
-        }
-
-        if (profile == null || profile.businessName.trim().isEmpty || profile.primaryCategoryId.trim().isEmpty) {
-          await providerRepository.signOut();
-          emit(ProviderNotRegisteredErrorState(
-            userId: user.uid,
-            phoneNumber: user.phoneNumber ?? '',
-            message: 'इस मोबाइल नंबर से कोई प्रोवाइडर खाता पंजीकृत नहीं है। कृपया नया रजिस्ट्रेशन करें।',
-          ));
-          return;
-        }
-
-        if (profile.status == ProviderAccountStatus.blocked || profile.status == ProviderAccountStatus.suspended) {
-          emit(ProviderAccountBlockedState(
-            reason: profile.rejectionReason ?? 'आपका अकाउंट एडमिन द्वारा ब्लॉक या निलंबित कर दिया गया है।',
-          ));
-          return;
-        }
-
-        _startWatchingProfile(profile.id);
-        emit(ProviderAuthenticated(profile));
-      } else {
-        emit(const ProviderAuthError('OTP सत्यापन विफल रहा।'));
-      }
-    } catch (e) {
-      emit(ProviderAuthError(_formatAuthException(e)));
-    }
-  }
-
   Future<void> _onSubmitCustomServiceApplication(
     SubmitCustomServiceApplicationEvent event,
     Emitter<ProviderAuthState> emit,
@@ -685,37 +585,6 @@ class ProviderAuthBloc extends Bloc<ProviderAuthEvent, ProviderAuthState> {
       }
     } catch (e) {
       emit(ProviderAuthError('श्रेणी परिवर्तन आवेदन सबमिट करने में विफल: ${_formatAuthException(e)}'));
-    }
-  }
-
-  Future<void> _onMigratePhoneAccount(
-    MigratePhoneAccountEvent event,
-    Emitter<ProviderAuthState> emit,
-  ) async {
-    emit(ProviderAuthLoading());
-    try {
-      final updatedProfile = await providerRepository.safeMigratePhoneAccount(
-        providerId: event.providerId,
-        email: event.email.trim().toLowerCase(),
-        password: event.password.trim(),
-      );
-
-      _startWatchingProfile(updatedProfile.id);
-
-      // Store provider role in local namespace
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('provider_active_uid', updatedProfile.id);
-        await prefs.setString('provider_active_role', 'provider');
-      } catch (_) {}
-
-      emit(ProviderAuthenticated(updatedProfile));
-      emit(ProviderAccountMigratedSuccessState(
-        profile: updatedProfile,
-        message: 'आपका ईमेल और पासवर्ड सफलतापूर्वक लिंक हो गया है! अब आप सीधे ईमेल और पासवर्ड से लॉगिन कर सकते हैं।',
-      ));
-    } catch (e) {
-      emit(ProviderAuthError(_formatAuthException(e)));
     }
   }
 

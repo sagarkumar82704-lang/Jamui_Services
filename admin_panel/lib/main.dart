@@ -15,24 +15,30 @@ import 'features/dashboard/data/datasources/dashboard_remote_data_source.dart';
 import 'features/dashboard/presentation/bloc/dashboard_bloc.dart';
 import 'features/layout/presentation/pages/main_layout_page.dart';
 import 'config/firebase/firebase_options.dart';
+import 'core/config/app_environment.dart';
 import 'core/config/emulator_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   try {
-    final options = EmulatorConfig.getEffectiveOptions(DefaultFirebaseOptions.currentPlatform);
+    AppEnvironmentConfig.logEnvironment('Admin Panel');
+    final options = DefaultFirebaseOptions.currentPlatform;
     await Firebase.initializeApp(
       options: options,
     );
-  } catch (e) {
-    debugPrint("Firebase init note: $e");
-  }
 
-  try {
-    await EmulatorConfig.configureEmulators();
-  } on EmulatorSafetyException catch (e) {
-    runApp(FatalEmulatorHaltApp(message: e.message));
+    if (AppEnvironmentConfig.isEmulator) {
+      try {
+        await EmulatorConfig.configureEmulators();
+      } on EmulatorSafetyException catch (e) {
+        runApp(FatalEmulatorHaltApp(message: e.message));
+        return;
+      }
+    }
+  } catch (e) {
+    debugPrint("🚨 [JAMUI SERVICES] Admin Panel Environment/Firebase Initialization Error: $e");
+    runApp(FatalEmulatorHaltApp(message: e.toString()));
     return;
   }
 

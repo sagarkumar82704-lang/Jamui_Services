@@ -3,6 +3,113 @@ import 'package:equatable/equatable.dart';
 import 'package:apna_jamui_customer/core/utils/jamui_geo_validator.dart';
 import 'package:apna_jamui_customer/core/utils/jamui_time_utils.dart';
 
+/// Promotional Banner Entity for a Professional Seller's Mini E-commerce Store.
+class ShopPromoBannerEntity extends Equatable {
+  final String imageUrl;
+  final String title;
+  final String subtitle;
+  final String offerText;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final bool isActive;
+
+  const ShopPromoBannerEntity({
+    this.imageUrl = '',
+    this.title = '',
+    this.subtitle = '',
+    this.offerText = '',
+    this.startDate,
+    this.endDate,
+    this.isActive = false,
+  });
+
+  bool get hasContent =>
+      title.trim().isNotEmpty ||
+      subtitle.trim().isNotEmpty ||
+      offerText.trim().isNotEmpty ||
+      imageUrl.trim().isNotEmpty;
+
+  bool isCurrentlyLive([DateTime? now]) {
+    if (!isActive || !hasContent) return false;
+    final checkTime = now ?? DateTime.now();
+    if (startDate != null) {
+      final startOfDay = DateTime(startDate!.year, startDate!.month, startDate!.day);
+      if (checkTime.isBefore(startOfDay)) return false;
+    }
+    if (endDate != null) {
+      final endOfDay = DateTime(endDate!.year, endDate!.month, endDate!.day, 23, 59, 59, 999);
+      if (checkTime.isAfter(endOfDay)) return false;
+    }
+    return true;
+  }
+
+  factory ShopPromoBannerEntity.fromMap(Map<String, dynamic>? map) {
+    if (map == null || map.isEmpty) return const ShopPromoBannerEntity();
+
+    DateTime? parseDate(dynamic raw) {
+      if (raw is Timestamp) return raw.toDate();
+      if (raw is DateTime) return raw;
+      if (raw is String && raw.trim().isNotEmpty) return DateTime.tryParse(raw.trim());
+      return null;
+    }
+
+    return ShopPromoBannerEntity(
+      imageUrl: (map['imageUrl'] as String?)?.trim() ?? '',
+      title: (map['title'] as String?)?.trim() ?? '',
+      subtitle: (map['subtitle'] as String?)?.trim() ?? '',
+      offerText: (map['offerText'] as String?)?.trim() ?? '',
+      startDate: parseDate(map['startDate']),
+      endDate: parseDate(map['endDate']),
+      isActive: (map['isActive'] as bool?) ?? false,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'imageUrl': imageUrl.trim(),
+      'title': title.trim(),
+      'subtitle': subtitle.trim(),
+      'offerText': offerText.trim(),
+      'startDate': startDate != null ? Timestamp.fromDate(startDate!) : null,
+      'endDate': endDate != null ? Timestamp.fromDate(endDate!) : null,
+      'isActive': isActive,
+    };
+  }
+
+  ShopPromoBannerEntity copyWith({
+    String? imageUrl,
+    String? title,
+    String? subtitle,
+    String? offerText,
+    DateTime? startDate,
+    bool clearStartDate = false,
+    DateTime? endDate,
+    bool clearEndDate = false,
+    bool? isActive,
+  }) {
+    return ShopPromoBannerEntity(
+      imageUrl: imageUrl ?? this.imageUrl,
+      title: title ?? this.title,
+      subtitle: subtitle ?? this.subtitle,
+      offerText: offerText ?? this.offerText,
+      startDate: clearStartDate ? null : (startDate ?? this.startDate),
+      endDate: clearEndDate ? null : (endDate ?? this.endDate),
+      isActive: isActive ?? this.isActive,
+    );
+  }
+
+  @override
+  List<Object?> get props => [
+        imageUrl,
+        title,
+        subtitle,
+        offerText,
+        startDate,
+        endDate,
+        isActive,
+      ];
+}
+
 class ProfessionalShopEntity extends Equatable {
   final String id;
   final String ownerUid;
@@ -16,10 +123,13 @@ class ProfessionalShopEntity extends Equatable {
   final String description;
   final String fullAddress;
   final String jamuiArea;
+  final String landmark;
   final String areaId;
   final String districtId;
   final double latitude;
   final double longitude;
+  final String locationSource;
+  final bool isLocationApproximate;
   final double? serviceRadiusKm;
   final String contactPhone;
   final String whatsAppNumber;
@@ -34,6 +144,7 @@ class ProfessionalShopEntity extends Equatable {
   final String openingTime;
   final String closingTime;
   final Map<String, dynamic>? weeklySchedule;
+  final ShopPromoBannerEntity? promoBanner;
   final String status;
   final bool isVerified;
   final bool isActive;
@@ -59,10 +170,13 @@ class ProfessionalShopEntity extends Equatable {
     this.description = '',
     this.fullAddress = '',
     this.jamuiArea = '',
+    this.landmark = '',
     this.areaId = '',
     this.districtId = '',
     this.latitude = 0.0,
     this.longitude = 0.0,
+    this.locationSource = '',
+    this.isLocationApproximate = false,
     this.serviceRadiusKm,
     this.contactPhone = '',
     this.whatsAppNumber = '',
@@ -77,6 +191,7 @@ class ProfessionalShopEntity extends Equatable {
     this.openingTime = '08:00 AM',
     this.closingTime = '09:00 PM',
     this.weeklySchedule,
+    this.promoBanner,
     this.status = 'approved',
     this.isVerified = true,
     this.isActive = false,
@@ -92,6 +207,9 @@ class ProfessionalShopEntity extends Equatable {
 
   /// Backward-compatible alias for subscription expiration timestamp.
   DateTime? get subscriptionExpiry => subscriptionExpiresAt;
+
+  /// Backward-compatible alias for approval/verification check.
+  bool get isApproved => isVerified || status.toLowerCase() == 'approved';
 
   /// Validates coordinates against precision sentinel (0,0) and boundaries.
   bool get hasValidLocation => JamuiGeoValidator.isValidCoordinates(latitude, longitude);
@@ -163,6 +281,13 @@ class ProfessionalShopEntity extends Equatable {
       parsedSchedule = Map<String, dynamic>.from(rawSchedule);
     }
 
+    ShopPromoBannerEntity? parsedPromoBanner;
+    if (map['promoBanner'] is Map) {
+      parsedPromoBanner = ShopPromoBannerEntity.fromMap(
+        Map<String, dynamic>.from(map['promoBanner'] as Map),
+      );
+    }
+
     return ProfessionalShopEntity(
       id: id,
       ownerUid: (map['ownerUid'] as String?) ?? id,
@@ -176,10 +301,13 @@ class ProfessionalShopEntity extends Equatable {
       description: (map['description'] as String?) ?? (map['businessDescription'] as String?) ?? '',
       fullAddress: (map['fullAddress'] as String?) ?? (map['address'] as String?) ?? '',
       jamuiArea: (map['jamuiArea'] as String?) ?? (map['area'] as String?) ?? '',
+      landmark: (map['landmark'] as String?) ?? '',
       areaId: (map['areaId'] as String?) ?? '',
       districtId: (map['districtId'] as String?) ?? '',
       latitude: (map['latitude'] as num?)?.toDouble() ?? 0.0,
       longitude: (map['longitude'] as num?)?.toDouble() ?? 0.0,
+      locationSource: (map['locationSource'] as String?) ?? '',
+      isLocationApproximate: (map['isLocationApproximate'] as bool?) ?? false,
       serviceRadiusKm: parsedRadius,
       contactPhone: (map['contactPhone'] as String?) ?? (map['phone'] as String?) ?? '',
       whatsAppNumber: (map['whatsAppNumber'] as String?) ?? (map['whatsapp'] as String?) ?? '',
@@ -194,6 +322,7 @@ class ProfessionalShopEntity extends Equatable {
       openingTime: (map['openingTime'] as String?) ?? '08:00 AM',
       closingTime: (map['closingTime'] as String?) ?? '09:00 PM',
       weeklySchedule: parsedSchedule,
+      promoBanner: parsedPromoBanner,
       status: (map['status'] as String?) ?? 'pending',
       isVerified: (map['isVerified'] as bool?) ?? false,
       isActive: (map['isActive'] as bool?) ?? false,
@@ -221,10 +350,13 @@ class ProfessionalShopEntity extends Equatable {
       'description': description,
       'fullAddress': fullAddress,
       'jamuiArea': jamuiArea,
+      'landmark': landmark,
       'areaId': areaId,
       'districtId': districtId,
       'latitude': latitude,
       'longitude': longitude,
+      'locationSource': locationSource,
+      'isLocationApproximate': isLocationApproximate,
       'serviceRadiusKm': serviceRadiusKm,
       'contactPhone': contactPhone,
       'whatsAppNumber': whatsAppNumber,
@@ -239,6 +371,7 @@ class ProfessionalShopEntity extends Equatable {
       'openingTime': openingTime,
       'closingTime': closingTime,
       'weeklySchedule': weeklySchedule,
+      if (promoBanner != null) 'promoBanner': promoBanner!.toMap(),
       'status': status,
       'isVerified': isVerified,
       'isActive': isActive,
@@ -265,10 +398,13 @@ class ProfessionalShopEntity extends Equatable {
     String? description,
     String? fullAddress,
     String? jamuiArea,
+    String? landmark,
     String? areaId,
     String? districtId,
     double? latitude,
     double? longitude,
+    String? locationSource,
+    bool? isLocationApproximate,
     double? serviceRadiusKm,
     String? contactPhone,
     String? whatsAppNumber,
@@ -283,6 +419,7 @@ class ProfessionalShopEntity extends Equatable {
     String? openingTime,
     String? closingTime,
     Map<String, dynamic>? weeklySchedule,
+    ShopPromoBannerEntity? promoBanner,
     String? status,
     bool? isVerified,
     bool? isActive,
@@ -308,10 +445,13 @@ class ProfessionalShopEntity extends Equatable {
       description: description ?? this.description,
       fullAddress: fullAddress ?? this.fullAddress,
       jamuiArea: jamuiArea ?? this.jamuiArea,
+      landmark: landmark ?? this.landmark,
       areaId: areaId ?? this.areaId,
       districtId: districtId ?? this.districtId,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
+      locationSource: locationSource ?? this.locationSource,
+      isLocationApproximate: isLocationApproximate ?? this.isLocationApproximate,
       serviceRadiusKm: serviceRadiusKm ?? this.serviceRadiusKm,
       contactPhone: contactPhone ?? this.contactPhone,
       whatsAppNumber: whatsAppNumber ?? this.whatsAppNumber,
@@ -326,6 +466,7 @@ class ProfessionalShopEntity extends Equatable {
       openingTime: openingTime ?? this.openingTime,
       closingTime: closingTime ?? this.closingTime,
       weeklySchedule: weeklySchedule ?? this.weeklySchedule,
+      promoBanner: promoBanner ?? this.promoBanner,
       status: status ?? this.status,
       isVerified: isVerified ?? this.isVerified,
       isActive: isActive ?? this.isActive,
@@ -354,10 +495,13 @@ class ProfessionalShopEntity extends Equatable {
         description,
         fullAddress,
         jamuiArea,
+        landmark,
         areaId,
         districtId,
         latitude,
         longitude,
+        locationSource,
+        isLocationApproximate,
         serviceRadiusKm,
         contactPhone,
         whatsAppNumber,
@@ -372,6 +516,7 @@ class ProfessionalShopEntity extends Equatable {
         openingTime,
         closingTime,
         weeklySchedule,
+        promoBanner,
         status,
         isVerified,
         isActive,

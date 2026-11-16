@@ -4,6 +4,7 @@ import '../../../../core/widgets/app_logo.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 import '../../../auth/presentation/bloc/provider_auth_bloc.dart';
 import '../../../auth/presentation/bloc/provider_auth_event.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import 'professional_shop_registration_page.dart';
 
 /// 🛡️ PROFESSIONAL SHOP OWNERSHIP CONFLICT & RESOLUTION SCREEN
@@ -51,10 +52,12 @@ class ProfessionalShopResolutionErrorView extends StatelessWidget {
       ),
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          padding: EdgeInsets.zero,
+          child: ResponsiveFormShell(
+            maxWidth: 540,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               // Security / Alert Icon
               Container(
                 width: 72,
@@ -183,6 +186,7 @@ class ProfessionalShopResolutionErrorView extends StatelessWidget {
                 ),
               ),
             ],
+          ),
           ),
         ),
       ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../location/data/datasources/location_remote_data_source.dart';
 
 /// 💎 PROFESSIONAL (PRO) SELLER REGISTRATION SCREEN
@@ -498,8 +499,11 @@ class _ProfessionalShopRegistrationPageState extends State<ProfessionalShopRegis
         child: _isLoading
             ? const Center(child: CircularProgressIndicator(color: _themeGreen))
             : SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-                child: _buildCurrentStepView(),
+                padding: EdgeInsets.zero,
+                child: ResponsiveFormShell(
+                  maxWidth: 580,
+                  child: _buildCurrentStepView(),
+                ),
               ),
       ),
     );
@@ -842,9 +846,11 @@ class _ProfessionalShopRegistrationPageState extends State<ProfessionalShopRegis
             children: [
               const Icon(Icons.check_circle_rounded, color: Color(0xFF1B5E20), size: 18),
               const SizedBox(width: 8),
-              Text(
-                'Location Status: ${_isGpsDetected ? "Enabled (Accurate GPS)" : "Default Jamui Coords"}',
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)),
+              Expanded(
+                child: Text(
+                  'Location Status: ${_isGpsDetected ? "Enabled (Accurate GPS)" : "Default Jamui Coords"}',
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)),
+                ),
               ),
             ],
           ),

@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/app_image_utils.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../../core/widgets/photo_source_picker.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 import '../../../auth/presentation/bloc/provider_auth_bloc.dart';
@@ -527,61 +528,67 @@ class _ProviderEditProfilePageState extends State<ProviderEditProfilePage> {
         ),
         body: Form(
           key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            children: [
-              // Photo Section: Shop Cover Photo & Profile Avatar
-              _buildPhotoCard(),
-              const SizedBox(height: 20),
-
-              // Category Section (Admin-Approved Category Lock)
-              _buildCategorySection(),
-              const SizedBox(height: 20),
-
-              // Shop Details
-              _buildSectionHeader('दुकान व व्यापार विवरण (Shop & Business Details)', Icons.storefront_rounded),
-              const SizedBox(height: 12),
-              _buildCard(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.zero,
+            child: ResponsiveContentContainer(
+              maxWidth: 820,
+              padding: ResponsiveLayout.pagePadding(context),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextFormField(
-                    controller: _businessNameController,
-                    decoration: const InputDecoration(
-                      labelText: 'दुकान / व्यापार का नाम (Shop Name) *',
-                      hintText: 'उदा.  इलेक्ट्रिकल वर्क्स',
-                      prefixIcon: Icon(Icons.store_mall_directory_rounded, color: AppColors.primary),
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (v) => (v == null || v.trim().isEmpty) ? 'दुकान / व्यापार का नाम दर्ज करें' : null,
-                  ),
-                  const SizedBox(height: 14),
-                  TextFormField(
-                    controller: _fullNameController,
-                    decoration: const InputDecoration(
-                      labelText: 'मालिक / कारीगर का पूरा नाम (Owner Full Name) *',
-                      hintText: 'उदा. s कुमार',
-                      prefixIcon: Icon(Icons.person_outline_rounded, color: AppColors.primary),
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (v) => (v == null || v.trim().isEmpty) ? 'मालिक का नाम दर्ज करें' : null,
-                  ),
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<String>(
-                    initialValue: _businessType,
-                    decoration: const InputDecoration(
-                      labelText: 'व्यापार का प्रकार (Business Type)',
-                      prefixIcon: Icon(Icons.business_center_outlined, color: AppColors.primary),
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'Individual', child: Text('व्यक्तिगत / स्वरोजगार (Individual)')),
-                      DropdownMenuItem(value: 'Shop', child: Text('स्थाई दुकान / वर्कशॉप (Shop/Workshop)')),
-                      DropdownMenuItem(value: 'Small Business', child: Text('लघु उद्यम (Small Business)')),
-                      DropdownMenuItem(value: 'Agency', child: Text('एजेंसी / सर्विस सेंटर (Agency)')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _businessType = v);
-                    },
-                  ),
+                  // Photo Section: Shop Cover Photo & Profile Avatar
+                  _buildPhotoCard(),
+                  const SizedBox(height: 20),
+
+                  // Category Section (Admin-Approved Category Lock)
+                  _buildCategorySection(),
+                  const SizedBox(height: 20),
+
+                  // Shop Details
+                  _buildSectionHeader('दुकान व व्यापार विवरण (Shop & Business Details)', Icons.storefront_rounded),
+                  const SizedBox(height: 12),
+                  _buildCard(
+                    children: [
+                      TextFormField(
+                        controller: _businessNameController,
+                        decoration: const InputDecoration(
+                          labelText: 'दुकान / व्यापार का नाम (Shop Name) *',
+                          hintText: 'उदा.  इलेक्ट्रिकल वर्क्स',
+                          prefixIcon: Icon(Icons.store_mall_directory_rounded, color: AppColors.primary),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) => (v == null || v.trim().isEmpty) ? 'दुकान / व्यापार का नाम दर्ज करें' : null,
+                      ),
+                      const SizedBox(height: 14),
+                      TextFormField(
+                        controller: _fullNameController,
+                        decoration: const InputDecoration(
+                          labelText: 'मालिक / कारीगर का पूरा नाम (Owner Full Name) *',
+                          hintText: 'उदा. s कुमार',
+                          prefixIcon: Icon(Icons.person_outline_rounded, color: AppColors.primary),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) => (v == null || v.trim().isEmpty) ? 'मालिक का नाम दर्ज करें' : null,
+                      ),
+                      const SizedBox(height: 14),
+                      DropdownButtonFormField<String>(
+                        initialValue: _businessType,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'व्यापार का प्रकार (Business Type)',
+                          prefixIcon: Icon(Icons.business_center_outlined, color: AppColors.primary),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'Individual', child: Text('व्यक्तिगत / स्वरोजगार (Individual)', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Shop', child: Text('स्थाई दुकान / वर्कशॉप (Shop/Workshop)', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Small Business', child: Text('लघु उद्यम (Small Business)', overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(value: 'Agency', child: Text('एजेंसी / सर्विस सेंटर (Agency)', overflow: TextOverflow.ellipsis)),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) setState(() => _businessType = v);
+                        },
+                      ),
                   const SizedBox(height: 14),
                   TextFormField(
                     controller: _businessDescController,
@@ -658,37 +665,62 @@ class _ProviderEditProfilePageState extends State<ProviderEditProfilePage> {
               const SizedBox(height: 12),
               _buildCard(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _visitingChargeController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'विज़िटिंग चार्ज (₹) *',
-                            hintText: '00',
-                            prefixIcon: Icon(Icons.currency_rupee_rounded, color: AppColors.primary),
-                            border: OutlineInputBorder(),
-                          ),
-                          validator: (v) => (v == null || v.trim().isEmpty) ? 'फीस दर्ज करें' : null,
-                        ),
+                  if (ResponsiveLayout.isSmallMobile(context)) ...[
+                    TextFormField(
+                      controller: _visitingChargeController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'विज़िटिंग चार्ज (₹) *',
+                        hintText: '00',
+                        prefixIcon: Icon(Icons.currency_rupee_rounded, color: AppColors.primary),
+                        border: OutlineInputBorder(),
                       ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _experienceYearsController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'अनुभव (वर्ष में) *',
-                            hintText: '3',
-                            prefixIcon: Icon(Icons.work_history_outlined, color: AppColors.primary),
-                            border: OutlineInputBorder(),
-                          ),
-                          validator: (v) => (v == null || v.trim().isEmpty) ? 'अनुभव दर्ज करें' : null,
-                        ),
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'फीस दर्ज करें' : null,
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: _experienceYearsController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'अनुभव (वर्ष में) *',
+                        hintText: '3',
+                        prefixIcon: Icon(Icons.work_history_outlined, color: AppColors.primary),
+                        border: OutlineInputBorder(),
                       ),
-                    ],
-                  ),
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'अनुभव दर्ज करें' : null,
+                    ),
+                  ] else
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _visitingChargeController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'विज़िटिंग चार्ज (₹) *',
+                              hintText: '00',
+                              prefixIcon: Icon(Icons.currency_rupee_rounded, color: AppColors.primary),
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (v) => (v == null || v.trim().isEmpty) ? 'फीस दर्ज करें' : null,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _experienceYearsController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'अनुभव (वर्ष में) *',
+                              hintText: '3',
+                              prefixIcon: Icon(Icons.work_history_outlined, color: AppColors.primary),
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (v) => (v == null || v.trim().isEmpty) ? 'अनुभव दर्ज करें' : null,
+                          ),
+                        ),
+                      ],
+                    ),
                   const SizedBox(height: 14),
                   TextFormField(
                     controller: _workingHoursController,
@@ -872,7 +904,9 @@ class _ProviderEditProfilePageState extends State<ProviderEditProfilePage> {
                 ),
               ),
               const SizedBox(height: 30),
-            ],
+                ],
+              ),
+            ),
           ),
         ),
       ),

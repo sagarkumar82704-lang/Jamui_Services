@@ -7,6 +7,7 @@ import '../../../auth/presentation/bloc/provider_auth_bloc.dart';
 import '../../../auth/presentation/bloc/provider_auth_event.dart';
 import '../../domain/entities/professional_shop_profile_entity.dart';
 import '../../data/datasources/professional_provider_remote_data_source.dart';
+import '../../../../core/utils/responsive_layout.dart';
 
 /// 💎 PROFESSIONAL SELLER REGISTRATION TRACKING SCREEN
 /// Implements Screen 2 ("REGISTRATION STATUS") of the Reference E-Commerce Seller Workspace.
@@ -153,11 +154,13 @@ class _ProfessionalRegistrationTrackingPageState extends State<ProfessionalRegis
         color: const Color(0xFF0F766E),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Shop Header Info Card
+          padding: EdgeInsets.zero,
+          child: ResponsiveFormShell(
+            maxWidth: 600,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Shop Header Info Card
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -407,6 +410,7 @@ class _ProfessionalRegistrationTrackingPageState extends State<ProfessionalRegis
                 ),
               ),
             ],
+          ),
           ),
         ),
       ),

@@ -6,11 +6,8 @@ import 'package:apna_jamui_customer/features/professional_shop/domain/entities/p
 import 'package:apna_jamui_customer/features/professional_shop/domain/entities/professional_product_entity.dart';
 import 'package:apna_jamui_customer/features/professional_shop/domain/entities/professional_shop_entity.dart';
 import 'package:apna_jamui_customer/features/professional_shop/presentation/bloc/professional_cart_bloc.dart';
-import 'package:apna_jamui_customer/features/professional_shop/presentation/pages/professional_shops_listing_page.dart';
 import 'package:apna_jamui_customer/features/professional_shop/presentation/pages/professional_shop_details_page.dart';
-import 'package:apna_jamui_customer/features/professional_shop/presentation/pages/professional_storefront_page.dart';
 import 'package:apna_jamui_customer/features/professional_shop/presentation/pages/professional_product_details_page.dart';
-import 'package:apna_jamui_customer/features/professional_shop/presentation/pages/professional_cart_page.dart';
 import 'package:apna_jamui_customer/features/professional_shop/presentation/widgets/professional_shop_card.dart';
 
 void main() {
@@ -158,7 +155,7 @@ void main() {
 
       expect(distA, isNotNull);
       expect(distB, isNotNull);
-      expect(distA! < distB!, isTrue);
+      expect(distA < distB, isTrue);
     });
 
     testWidgets('ProfessionalShopCard renders category, verified distance, and fulfillment chips', (tester) async {

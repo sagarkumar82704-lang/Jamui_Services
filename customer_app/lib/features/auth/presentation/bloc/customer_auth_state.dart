@@ -142,14 +142,6 @@ class CustomerPasswordResetSentState extends CustomerAuthState {
   List<Object?> get props => [email];
 }
 
-class CustomerEmailLinkedSuccessState extends CustomerAuthState {
-  final String email;
-  const CustomerEmailLinkedSuccessState(this.email);
-
-  @override
-  List<Object?> get props => [email];
-}
-
 
 class CustomerAuthFailureState extends CustomerAuthState {
   final String errorMessage;

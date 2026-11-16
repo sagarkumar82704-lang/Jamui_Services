@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/notification_read_helper.dart';
+import '../../../../core/utils/responsive_layout.dart';
 
 class NotificationsPage extends StatefulWidget {
   final String providerId;
@@ -183,68 +184,78 @@ class _NotificationsPageState extends State<NotificationsPage> {
               // Unread summary bar & Mark all as read button
               if (unreadCount > 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  width: double.infinity,
                   color: AppColors.accent.withValues(alpha: 0.08),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '$unreadCount अपठित सूचना${unreadCount > 1 ? 'एं' : ''}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.accent,
+                  child: ResponsiveContentContainer(
+                    maxWidth: 860,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        Text(
+                          '$unreadCount अपठित सूचना${unreadCount > 1 ? 'एं' : ''}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.accent,
+                          ),
                         ),
-                      ),
-                      TextButton(
-                        onPressed: _isMarkingAllRead ? null : () => _markAllAsRead(docs),
-                        style: TextButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          minimumSize: const Size(50, 30),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        TextButton(
+                          onPressed: _isMarkingAllRead ? null : () => _markAllAsRead(docs),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(50, 30),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: _isMarkingAllRead
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+                                )
+                              : const Text(
+                                  'सब पढ़ा हुआ चिह्नित करें',
+                                  style: TextStyle(fontSize: 12, color: AppColors.accent, fontWeight: FontWeight.bold),
+                                ),
                         ),
-                        child: _isMarkingAllRead
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
-                              )
-                            : const Text(
-                                'सब पढ़ा हुआ चिह्नित करें',
-                                style: TextStyle(fontSize: 12, color: AppColors.accent, fontWeight: FontWeight.bold),
-                              ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               Expanded(
                 child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: ResponsiveLayout.pagePadding(context),
                   itemCount: docs.length + (hasMore ? 1 : 0),
                   itemBuilder: (context, index) {
                     if (index == docs.length) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8.0),
-                        child: Center(
-                          child: TextButton.icon(
-                            icon: const Icon(
-                              Icons.keyboard_arrow_down_rounded,
-                              color: AppColors.primary,
-                              size: 20,
-                            ),
-                            label: Text(
-                              'और पुरानी सूचनाएं देखें (${docs.length} लोड हैं)',
-                              style: const TextStyle(
+                      return ResponsiveContentContainer(
+                        maxWidth: 860,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: Center(
+                            child: TextButton.icon(
+                              icon: const Icon(
+                                Icons.keyboard_arrow_down_rounded,
                                 color: AppColors.primary,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
+                                size: 20,
                               ),
+                              label: Text(
+                                'और पुरानी सूचनाएं देखें (${docs.length} लोड हैं)',
+                                style: const TextStyle(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _limit += 25;
+                                });
+                              },
                             ),
-                            onPressed: () {
-                              setState(() {
-                                _limit += 25;
-                              });
-                            },
                           ),
                         ),
                       );
@@ -262,82 +273,85 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     final createdAt = data['createdAt'] as Timestamp?;
                     final timeFormatted = _formatTimestamp(createdAt);
 
-                    return InkWell(
-                      onTap: () => _markSingleAsRead(doc.reference, doc.id, data),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: isRead ? Colors.white : AppColors.accent.withValues(alpha: 0.05),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isRead ? AppColors.border : AppColors.accent.withValues(alpha: 0.3),
-                            width: isRead ? 1.0 : 1.5,
+                    return ResponsiveContentContainer(
+                      maxWidth: 860,
+                      child: InkWell(
+                        onTap: () => _markSingleAsRead(doc.reference, doc.id, data),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: isRead ? Colors.white : AppColors.accent.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isRead ? AppColors.border : AppColors.accent.withValues(alpha: 0.3),
+                              width: isRead ? 1.0 : 1.5,
+                            ),
                           ),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                              isRead ? Icons.notifications_none : Icons.notifications_active,
-                              color: isRead ? AppColors.textMuted : AppColors.accent,
-                              size: 22,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          title,
-                                          style: TextStyle(
-                                            fontWeight: isRead ? FontWeight.w600 : FontWeight.bold,
-                                            fontSize: 14,
-                                            color: AppColors.textPrimary,
-                                          ),
-                                        ),
-                                      ),
-                                      if (!isRead)
-                                        Container(
-                                          margin: const EdgeInsets.only(left: 6),
-                                          width: 8,
-                                          height: 8,
-                                          decoration: const BoxDecoration(
-                                            color: AppColors.accent,
-                                            shape: BoxShape.circle,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    message,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.textSecondary,
-                                      height: 1.3,
-                                    ),
-                                  ),
-                                  if (timeFormatted.isNotEmpty) ...[
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      timeFormatted,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: isRead ? AppColors.textMuted : AppColors.accent,
-                                        fontWeight: isRead ? FontWeight.normal : FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
-                                ],
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                isRead ? Icons.notifications_none : Icons.notifications_active,
+                                color: isRead ? AppColors.textMuted : AppColors.accent,
+                                size: 22,
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            title,
+                                            style: TextStyle(
+                                              fontWeight: isRead ? FontWeight.w600 : FontWeight.bold,
+                                              fontSize: 14,
+                                              color: AppColors.textPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                        if (!isRead)
+                                          Container(
+                                            margin: const EdgeInsets.only(left: 6),
+                                            width: 8,
+                                            height: 8,
+                                            decoration: const BoxDecoration(
+                                              color: AppColors.accent,
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      message,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.textSecondary,
+                                        height: 1.3,
+                                      ),
+                                    ),
+                                    if (timeFormatted.isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        timeFormatted,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: isRead ? AppColors.textMuted : AppColors.accent,
+                                          fontWeight: isRead ? FontWeight.normal : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );

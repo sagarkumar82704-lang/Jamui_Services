@@ -245,32 +245,36 @@ class _ProfessionalShopProfilePageState extends State<ProfessionalShopProfilePag
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Row(
-                                children: [
-                                  Icon(
-                                    _isOpen ? Icons.door_sliding_rounded : Icons.lock_outline_rounded,
-                                    color: _isOpen ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
-                                    size: 22,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _isOpen ? 'दुकान खुली है (Shop Open)' : 'दुकान बंद है (Shop Closed)',
-                                        style: TextStyle(
-                                          fontSize: 13.5,
-                                          fontWeight: FontWeight.bold,
-                                          color: _isOpen ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
-                                        ),
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _isOpen ? Icons.door_sliding_rounded : Icons.lock_outline_rounded,
+                                      color: _isOpen ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
+                                      size: 22,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            _isOpen ? 'दुकान खुली है (Shop Open)' : 'दुकान बंद है (Shop Closed)',
+                                            style: TextStyle(
+                                              fontSize: 13.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: _isOpen ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
+                                            ),
+                                          ),
+                                          Text(
+                                            _isOpen ? 'ग्राहक नए ऑर्डर दे सकते हैं' : 'नए ऑर्डर अस्थायी रूप से रोके गए हैं',
+                                            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                                          ),
+                                        ],
                                       ),
-                                      Text(
-                                        _isOpen ? 'ग्राहक नए ऑर्डर दे सकते हैं' : 'नए ऑर्डर अस्थायी रूप से रोके गए हैं',
-                                        style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                    ),
+                                  ],
+                                ),
                               ),
                               Switch(
                                 value: _isOpen,
@@ -304,19 +308,23 @@ class _ProfessionalShopProfilePageState extends State<ProfessionalShopProfilePag
                       children: [
                         Icon(Icons.schedule_rounded, size: 20, color: Color(0xFF0F766E)),
                         SizedBox(width: 8),
-                        Text(
-                          'कार्य समय (Business Hours)',
-                          style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                        Expanded(
+                          child: Text(
+                            'कार्य समय (Business Hours)',
+                            style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
                       children: [
                         _buildTimeInfo('खुलने का समय', shop.openingTime.isNotEmpty ? shop.openingTime : '08:00 AM'),
                         _buildTimeInfo('बंद होने का समय', shop.closingTime.isNotEmpty ? shop.closingTime : '09:00 PM'),
-                        _buildTimeInfo('साप्ताहिक अवकाश', 'कोई अवकाश नहीं (7 दिन खुला)'),
+                        _buildTimeInfo('साप्ताहिक अवकाश', 'कोई अवकाश नहीं'),
                       ],
                     ),
                   ],
@@ -340,15 +348,20 @@ class _ProfessionalShopProfilePageState extends State<ProfessionalShopProfilePag
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.local_shipping_outlined, size: 20, color: Color(0xFF1D4ED8)),
-                            SizedBox(width: 8),
-                            Text(
-                              'डिलीवरी एवं पिकअप सेटिंग्स',
-                              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
-                            ),
-                          ],
+                        const Expanded(
+                          child: Row(
+                            children: [
+                              Icon(Icons.local_shipping_outlined, size: 20, color: Color(0xFF1D4ED8)),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'डिलीवरी एवं पिकअप सेटिंग्स',
+                                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                         TextButton(
                           onPressed: () {
@@ -388,15 +401,20 @@ class _ProfessionalShopProfilePageState extends State<ProfessionalShopProfilePag
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.card_membership_rounded, size: 20, color: Color(0xFFE65100)),
-                            SizedBox(width: 8),
-                            Text(
-                              'सब्सक्रिप्शन एवं प्लान',
-                              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
-                            ),
-                          ],
+                        const Expanded(
+                          child: Row(
+                            children: [
+                              Icon(Icons.card_membership_rounded, size: 20, color: Color(0xFFE65100)),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'सब्सक्रिप्शन एवं प्लान',
+                                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                         TextButton(
                           onPressed: () {
@@ -518,15 +536,13 @@ class _ProfessionalShopProfilePageState extends State<ProfessionalShopProfilePag
   }
 
   Widget _buildTimeInfo(String label, String value) {
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-          const SizedBox(height: 2),
-          Text(value, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+      ],
     );
   }
 
@@ -536,7 +552,8 @@ class _ProfessionalShopProfilePageState extends State<ProfessionalShopProfilePag
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B))),
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)))),
+          const SizedBox(width: 8),
           Text(value, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF1E293B))),
         ],
       ),

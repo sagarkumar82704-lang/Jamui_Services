@@ -1,10 +1,17 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../../../core/config/razorpay_payment_config.dart';
 import '../../../subscription/presentation/services/razorpay_checkout_service.dart';
 import '../../data/datasources/professional_provider_remote_data_source.dart';
 import '../../domain/entities/professional_shop_profile_entity.dart';
+import '../../domain/professional_entitlement_resolver.dart';
+import '../../../../core/utils/responsive_layout.dart';
+import '../../../../core/localization/provider_strings.dart';
 
+/// Professional Subscription Page for Professional Marketplace Sellers.
+/// Completely isolated from normal service provider subscriptions.
+/// Displays Current Plan, Price, Validity, Expiry, Status, Used Limits, Features, Upgrades & Payment History.
 class ProfessionalShopSubscriptionPage extends StatefulWidget {
   final ProfessionalShopProfileEntity shop;
   final ProfessionalProviderRemoteDataSource? dataSource;
@@ -39,13 +46,15 @@ class _ProfessionalShopSubscriptionPageState
   Map<String, dynamic>? _pendingVerification;
   Map<String, dynamic>? _pendingRetryPayment;
 
+  late final Stream<List<Map<String, dynamic>>> _productsStream;
+  late final Stream<List<Map<String, dynamic>>> _paymentsStream;
+
   @override
   void initState() {
     super.initState();
     _currentShop = widget.shop;
     _dataSource = widget.dataSource ?? ProfessionalProviderRemoteDataSource();
-    _checkoutService =
-        widget.checkoutService ?? RazorpayCheckoutService();
+    _checkoutService = widget.checkoutService ?? RazorpayCheckoutService();
 
     _checkoutService.init(
       onSuccess: _handlePaymentSuccess,
@@ -53,6 +62,9 @@ class _ProfessionalShopSubscriptionPageState
       onDismiss: _handlePaymentDismissed,
       onExternalWallet: _handleExternalWallet,
     );
+
+    _productsStream = _dataSource.streamProducts(_currentShop.id);
+    _paymentsStream = _dataSource.streamShopPayments(_currentShop.id);
 
     _subscribeToShopUpdates();
     _fetchPlans();
@@ -115,7 +127,6 @@ class _ProfessionalShopSubscriptionPageState
 
     try {
       // 1. Authoritative Server-side Order Creation via Cloud Functions
-      // Strictly sends only shopId and planId
       final orderRes = await _dataSource.createProfessionalSubscriptionOrder(
         shopId: _currentShop.id,
         planId: planId,
@@ -322,7 +333,8 @@ class _ProfessionalShopSubscriptionPageState
             plan?['durationDays'] as num? ??
             30;
 
-        _showSuccessActivationDialog(planName, duration.toInt(), isShopApproved);
+        _showSuccessActivationDialog(
+            planName, duration.toInt(), isShopApproved);
       }
     } catch (e) {
       if (mounted && Navigator.canPop(context)) {
@@ -570,7 +582,7 @@ class _ProfessionalShopSubscriptionPageState
 
   String _buildValidityText() {
     if (_currentShop.subscriptionExpiry == null) {
-      return 'Valid Till: Unlimited';
+      return 'Unlimited / Inactive';
     }
     final expiry = _currentShop.subscriptionExpiry!;
     final formattedDate =
@@ -580,221 +592,662 @@ class _ProfessionalShopSubscriptionPageState
 
     if (difference.isNegative) {
       final daysAgo = (-difference.inDays);
-      return 'Expired on: $formattedDate (${daysAgo == 0 ? "today" : "$daysAgo days ago"})';
+      return 'Expired on $formattedDate (${daysAgo == 0 ? "today" : "$daysAgo days ago"})';
     } else {
       final daysRemaining = difference.inDays;
       if (daysRemaining == 0) {
-        return 'Valid Till: $formattedDate (Expires today)';
+        return 'Expires today ($formattedDate)';
       } else if (daysRemaining <= 5) {
-        return 'Valid Till: $formattedDate ($daysRemaining days left — Expiring Soon!)';
+        return '$formattedDate ($daysRemaining days left — Expiring Soon!)';
       } else {
-        return 'Valid Till: $formattedDate ($daysRemaining days remaining)';
-      }
-    }
-  }
-
-  String _getPlanButtonText(Map<String, dynamic> plan) {
-    final planId = plan['id'];
-    final isCurrentPlan = _currentShop.subscriptionPlanId == planId ||
-        _currentShop.subscriptionPlanName == plan['name'];
-
-    if (_currentShop.isSubscriptionActive) {
-      if (isCurrentPlan) {
-        return 'Renew Plan';
-      } else {
-        return 'Switch to this Plan';
-      }
-    } else {
-      if (_currentShop.subscriptionExpiry != null) {
-        return 'Renew Subscription';
-      } else {
-        return 'Subscribe Now';
+        return '$formattedDate ($daysRemaining days remaining)';
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final entitlements = ProfessionalEntitlementResolver.resolve(_currentShop);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
-        title: const Text(
-          'Shop Subscription Plans',
-          style: TextStyle(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              color: Color(0xFF1E293B), size: 18),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          ProviderStrings.professionalSubscription,
+          style: const TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.bold,
               color: Color(0xFF1E293B)),
         ),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Current Plan Overview Card
-            _buildCurrentPlanCard(),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 960),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 1. Current Plan Card
+                _buildCurrentPlanHeroCard(entitlements),
+                const SizedBox(height: 16),
 
-            const SizedBox(height: 16),
+                // Recovery Banner if payment is pending
+                _buildRecoveryBanner(),
 
-            // Pending Verification Recovery Banner (if any)
-            _buildRecoveryBanner(),
+                // Admin Approval Notice Banner
+                _buildApprovalNoticeBanner(),
 
-            // Admin Approval Separation Notice Banner
-            _buildApprovalNoticeBanner(),
-
-            // Available Plans Section
-            const Text(
-              'Available Plans (Managed by Admin)',
-              style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E293B)),
-            ),
-            const SizedBox(height: 12),
-
-            if (_isLoadingPlans)
-              const Center(
-                  child: CircularProgressIndicator(color: Color(0xFF0F766E)))
-            else if (_plans.isEmpty)
-              Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.grey.shade200),
+                // 2. Used Limits vs Plan Limits
+                StreamBuilder<List<Map<String, dynamic>>>(
+                  stream: _productsStream,
+                  builder: (context, snap) {
+                    final products = snap.data ?? [];
+                    final productCount = products.length;
+                    return _buildLimitsProgressCard(entitlements, productCount);
+                  },
                 ),
-                child: Column(
+                const SizedBox(height: 16),
+
+                // 3. Feature Entitlements Matrix
+                _buildFeaturesMatrixCard(entitlements),
+                const SizedBox(height: 24),
+
+                // 4. Upgrade & Renew Subscription Plans
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Icon(Icons.workspace_premium_outlined,
-                        size: 40, color: Colors.grey.shade400),
-                    const SizedBox(height: 10),
                     const Text(
-                      'No subscription plans available currently.',
+                      'Upgrade or Renew Subscription',
                       style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFF64748B)),
-                      textAlign: TextAlign.center,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F172A)),
                     ),
+                    if (_isLoadingPlans)
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Color(0xFF1D4ED8)),
+                      ),
                   ],
                 ),
-              )
-            else
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _plans.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 14),
-                itemBuilder: (ctx, i) => _buildPlanCard(_plans[i]),
-              ),
-          ],
+                const SizedBox(height: 12),
+
+                if (_isLoadingPlans)
+                  const Center(
+                      child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: CircularProgressIndicator(
+                              color: Color(0xFF1D4ED8))))
+                else if (_plans.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'No subscription plans available currently. Contact Admin.',
+                        style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                      ),
+                    ),
+                  )
+                else
+                  ResponsiveCardGrid(
+                    tabletColumns: 2,
+                    desktopColumns: 3,
+                    largeDesktopColumns: 3,
+                    children: _plans.map((p) => _buildPlanPurchaseCard(p, entitlements)).toList(),
+                  ),
+
+                const SizedBox(height: 28),
+
+                // 5. Payment Transaction History
+                const Text(
+                  'Payment History',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A)),
+                ),
+                const SizedBox(height: 12),
+                StreamBuilder<List<Map<String, dynamic>>>(
+                  stream: _paymentsStream,
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const Center(
+                          child: Padding(
+                              padding: EdgeInsets.all(16),
+                              child: CircularProgressIndicator()));
+                    }
+                    final payments = snap.data ?? [];
+                    return _buildPaymentHistoryCard(payments);
+                  },
+                ),
+                const SizedBox(height: 30),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildCurrentPlanCard() {
-    final isShopApproved =
-        _currentShop.isApproved || _currentShop.status == 'approved';
+  Widget _buildCurrentPlanHeroCard(ProfessionalEntitlements ent) {
+    final bool isLive = ent.isValid;
+    final bool isExpired = ent.isExpired;
+
+    Color statusBg = isLive ? const Color(0xFF10B981) : (isExpired ? const Color(0xFFEF4444) : const Color(0xFF64748B));
+    String statusText = isLive ? 'ACTIVE' : (isExpired ? 'EXPIRED' : 'INACTIVE');
 
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF0F766E), Color(0xFF115E59)],
+          colors: [Color(0xFF1E3A8A), Color(0xFF1D4ED8)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-              color: const Color(0xFF0F766E).withValues(alpha: 0.3),
-              blurRadius: 10,
-              offset: const Offset(0, 4)),
+            color: const Color(0xFF1D4ED8).withValues(alpha: 0.25),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
         ],
       ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'CURRENT PLAN',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.8,
+                        color: Color(0xFFBFDBFE),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      ent.planName,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusBg,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  statusText,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Divider(height: 1, thickness: 0.8, color: Color(0x33FFFFFF)),
+          const SizedBox(height: 14),
+
+          // Validity & Expiry
+          Row(
+            children: [
+              const Icon(Icons.event_available_rounded, size: 16, color: Color(0xFF93C5FD)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Validity: ${_buildValidityText()}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_currentShop.subscriptionDurationDays > 0) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.timer_outlined, size: 16, color: Color(0xFF93C5FD)),
+                const SizedBox(width: 8),
+                Text(
+                  'Plan Duration: ${_currentShop.subscriptionDurationDays} Days',
+                  style: const TextStyle(fontSize: 13, color: Color(0xFFE0E7FF)),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLimitsProgressCard(ProfessionalEntitlements ent, int currentProducts) {
+    final double progress = (ent.maxProducts > 0)
+        ? (currentProducts / ent.maxProducts).clamp(0.0, 1.0)
+        : 0.0;
+    final bool isNearLimit = progress >= 0.8;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
-                child: Text(
-                  _currentShop.subscriptionPlanName.isNotEmpty
-                      ? _currentShop.subscriptionPlanName
-                      : 'Free Plan',
-                  style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white),
+              const Text(
+                'Plan Limits & Capacity Usage',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0F172A),
                 ),
               ),
-              Row(
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _currentShop.isSubscriptionActive
-                          ? const Color(0xFF10B981)
-                          : Colors.white24,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      _currentShop.isSubscriptionActive ? 'ACTIVE' : 'EXPIRED',
-                      style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: isShopApproved
-                          ? Colors.white24
-                          : const Color(0xFFF59E0B).withValues(alpha: 0.8),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      isShopApproved ? 'Approved' : 'Pending Approval',
-                      style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white),
-                    ),
-                  ),
-                ],
+              Text(
+                '$currentProducts / ${ent.maxProducts} Products',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: isNearLimit ? const Color(0xFFDC2626) : const Color(0xFF1D4ED8),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            'Products Allowed: Up to ${_currentShop.maxProductsLimit} products',
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              backgroundColor: const Color(0xFFF1F5F9),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                isNearLimit ? const Color(0xFFDC2626) : const Color(0xFF1D4ED8),
+              ),
+            ),
           ),
-          const SizedBox(height: 3),
-          Text(
-            'Images: Up to ${_currentShop.imageLimit} / month  •  Storage: ${_currentShop.storageLimitMb} MB',
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            _buildValidityText(),
-            style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 13),
+          const SizedBox(height: 16),
+
+          // Limits Row
+          Row(
+            children: [
+              Expanded(
+                child: _buildLimitStatBox(
+                  'Selling Options',
+                  'Unlimited sizes & packs',
+                  Icons.layers_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildLimitStatBox(
+                  'Image Uploads',
+                  '${ent.maxImagesPerProduct} / Product',
+                  Icons.photo_library_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildLimitStatBox(
+                  'Cloud Storage',
+                  '${ent.storageLimitMb} MB',
+                  Icons.cloud_outlined,
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLimitStatBox(String label, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: const Color(0xFF64748B)),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeaturesMatrixCard(ProfessionalEntitlements ent) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Included Features & Entitlements',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _buildFeaturePill('Advanced Analytics', ent.advancedAnalytics),
+              _buildFeaturePill('Promotional Banners', ent.promotionalTools),
+              _buildFeaturePill('Low Stock Alerts', ent.lowStockAlerts),
+              _buildFeaturePill('Custom Attributes', ent.customAttributes),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeaturePill(String name, bool isEnabled) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: isEnabled ? const Color(0xFFDCFCE7) : const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: isEnabled ? const Color(0xFF86EFAC) : Colors.grey.shade300),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isEnabled ? Icons.check_circle_rounded : Icons.lock_outline_rounded,
+            size: 13,
+            color: isEnabled ? const Color(0xFF15803D) : const Color(0xFF94A3B8),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            name,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: isEnabled ? const Color(0xFF15803D) : const Color(0xFF64748B),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlanPurchaseCard(Map<String, dynamic> plan, ProfessionalEntitlements currentEnt) {
+    final planId = plan['id']?.toString() ?? '';
+    final name = plan['name']?.toString() ?? 'Plan';
+    final price = (plan['price'] as num?)?.toDouble() ?? 0.0;
+    final duration = (plan['durationDays'] as num?)?.toInt() ?? 30;
+    final maxProds = (plan['maxProducts'] as num?)?.toInt() ?? (plan['productLimit'] as num?)?.toInt() ?? 50;
+    final isCurrent = _currentShop.subscriptionPlanId == planId || _currentShop.subscriptionPlanName == name;
+    final isProcessing = _isProcessingPayment && _processingPlanId == planId;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isCurrent ? const Color(0xFF1D4ED8) : Colors.grey.shade200,
+          width: isCurrent ? 2 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isCurrent)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'YOUR CURRENT PLAN',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1D4ED8),
+                ),
+              ),
+            ),
+          Text(
+            name,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                '₹${price % 1 == 0 ? price.toInt() : price}',
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF059669)),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '/ $duration Days',
+                style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+              ),
+            ],
+          ),
+          const Divider(height: 20, thickness: 0.8, color: Color(0xFFF1F5F9)),
+          _buildPlanBenefit(Icons.check_rounded, 'Up to $maxProds Products'),
+          _buildPlanBenefit(Icons.check_rounded, 'Unlimited sizes, weights & pack options'),
+          _buildPlanBenefit(Icons.check_rounded, 'Full Online Storefront'),
+          _buildPlanBenefit(Icons.check_rounded, 'Direct Order Notifications'),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isCurrent ? const Color(0xFF0F766E) : const Color(0xFF1D4ED8),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onPressed: isProcessing ? null : () => _startPayment(plan),
+              child: isProcessing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : Text(
+                      isCurrent ? 'Renew Plan' : 'Upgrade to $name',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlanBenefit(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFF10B981)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text, style: const TextStyle(fontSize: 12.5, color: Color(0xFF475569))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentHistoryCard(List<Map<String, dynamic>> payments) {
+    if (payments.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: const Center(
+          child: Text(
+            'No payment transactions recorded yet.',
+            style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: payments.length,
+        separatorBuilder: (_, index) => const Divider(height: 1, color: Color(0xFFF1F5F9)),
+        itemBuilder: (context, index) {
+          final p = payments[index];
+          final amt = (p['amount'] as num?)?.toDouble() ?? 0.0;
+          final planName = p['planName']?.toString() ?? 'Plan';
+          final status = p['status']?.toString() ?? 'created';
+          final orderId = p['orderId']?.toString() ?? p['id']?.toString() ?? '';
+          final payId = p['paymentId']?.toString() ?? '';
+
+          DateTime? date;
+          final rawCreated = p['createdAt'];
+          if (rawCreated is Timestamp) date = rawCreated.toDate();
+
+          final bool isSuccess = status == 'activated';
+
+          return ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            leading: CircleAvatar(
+              backgroundColor: isSuccess ? const Color(0xFFECFDF5) : const Color(0xFFFFFBEB),
+              child: Icon(
+                isSuccess ? Icons.check_circle_outline_rounded : Icons.pending_outlined,
+                color: isSuccess ? const Color(0xFF059669) : const Color(0xFFD97706),
+                size: 20,
+              ),
+            ),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  planName,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                ),
+                Text(
+                  '₹${amt % 1 == 0 ? amt.toInt() : amt}',
+                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: Color(0xFF0F172A)),
+                ),
+              ],
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 2),
+                Text(
+                  'Order: $orderId ${payId.isNotEmpty ? "• Pay: $payId" : ""}',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                ),
+                if (date != null)
+                  Text(
+                    '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}',
+                    style: const TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8)),
+                  ),
+              ],
+            ),
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: isSuccess ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                status.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: isSuccess ? const Color(0xFF15803D) : const Color(0xFFB45309),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -925,113 +1378,6 @@ class _ProfessionalShopSubscriptionPageState
                 ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPlanCard(Map<String, dynamic> plan) {
-    final planId = plan['id']?.toString() ?? '';
-    final name = plan['name'] ?? 'Shop Plan';
-    final price = (plan['price'] as num?)?.toInt() ?? 199;
-    final durationDays = plan['durationDays'] as num?;
-    final maxProd = plan['maxProducts'] ?? plan['productLimit'] ?? 50;
-    final imagesMonth =
-        plan['maxImagesPerMonth'] ?? plan['imageLimit'] ?? 100;
-    final storageMb = plan['storageMb'] ?? plan['storageLimitMb'] ?? 100;
-
-    final isThisPlanProcessing =
-        _isProcessingPayment && _processingPlanId == planId;
-    final buttonText = _getPlanButtonText(plan);
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 3)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(name,
-                    style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E293B))),
-              ),
-              Text('₹$price',
-                  style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F766E))),
-            ],
-          ),
-          const Divider(height: 20),
-          _buildFeatureRow(durationDays != null && durationDays > 0
-              ? 'Duration: ${durationDays.toInt()} Days'
-              : 'Duration: Duration not configured'),
-          _buildFeatureRow('Catalog Limit: $maxProd products'),
-          _buildFeatureRow('Product Images: Up to $imagesMonth / month'),
-          _buildFeatureRow('Cloud Storage: $storageMb MB included'),
-          _buildFeatureRow('Home Delivery & Pickup enabled'),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 44,
-            child: ElevatedButton(
-              onPressed: _isProcessingPayment
-                  ? null
-                  : () => _startPayment(plan),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0F766E),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-              ),
-              child: isThisPlanProcessing
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : Text(
-                      buttonText,
-                      style: const TextStyle(
-                          color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFeatureRow(String text) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          const Icon(Icons.check_circle_rounded,
-              color: Color(0xFF0F766E), size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(text,
-                style: const TextStyle(
-                    fontSize: 13, color: Color(0xFF475569))),
           ),
         ],
       ),

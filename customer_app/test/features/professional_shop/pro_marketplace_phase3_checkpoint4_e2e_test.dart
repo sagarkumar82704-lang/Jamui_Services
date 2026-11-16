@@ -9,7 +9,6 @@ import 'package:apna_jamui_customer/features/professional_shop/domain/entities/p
 import 'package:apna_jamui_customer/features/professional_shop/domain/entities/professional_category_entity.dart';
 import 'package:apna_jamui_customer/features/professional_shop/domain/entities/professional_shop_entity.dart';
 import 'package:apna_jamui_customer/features/professional_shop/presentation/pages/professional_shops_listing_page.dart';
-import 'package:apna_jamui_customer/features/professional_shop/presentation/widgets/professional_shop_card.dart';
 import 'package:apna_jamui_customer/features/professional_shop/presentation/widgets/professional_shop_skeleton.dart';
 
 class Checkpoint4MockDataSource extends ProfessionalShopRemoteDataSource {

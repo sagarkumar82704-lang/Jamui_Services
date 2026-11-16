@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../data/datasources/firebase_customer_discovery_remote_data_source.dart';
 import '../../domain/entities/service_provider_entity.dart';
 import '../../domain/repositories/customer_discovery_repository.dart';
 import 'discovery_event.dart';
@@ -31,6 +32,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
       final paginated = await discoveryRepository.getPaginatedProviders(
         customerLatitude: event.customerLatitude,
         customerLongitude: event.customerLongitude,
+        customerVillage: event.customerVillage,
+        customerBlock: event.customerBlock,
         limit: _pageSize,
         lastDocumentCursor: null,
       );
@@ -41,6 +44,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
         customerLatitude: event.customerLatitude,
         customerLongitude: event.customerLongitude,
         customerAreaName: event.customerAreaName ?? 'स्थान चुनें (GPS)',
+        customerVillage: event.customerVillage ?? '',
+        customerBlock: event.customerBlock ?? '',
         hasMoreProviders: paginated.hasMore,
         lastDocumentCursor: paginated.lastDocumentCursor,
         isLoadingMore: false,
@@ -72,6 +77,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
         searchQuery: current.searchQuery,
         customerLatitude: event.latitude,
         customerLongitude: event.longitude,
+        customerVillage: event.village,
+        customerBlock: event.block,
         limit: _pageSize,
         lastDocumentCursor: null,
       );
@@ -82,6 +89,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
         customerLatitude: event.latitude,
         customerLongitude: event.longitude,
         customerAreaName: event.areaName,
+        customerVillage: event.village,
+        customerBlock: event.block,
         hasMoreProviders: paginated.hasMore,
         lastDocumentCursor: paginated.lastDocumentCursor,
         isLoadingMore: false,
@@ -116,6 +125,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
           searchQuery: current.searchQuery,
           customerLatitude: current.customerLatitude,
           customerLongitude: current.customerLongitude,
+          customerVillage: current.customerVillage,
+          customerBlock: current.customerBlock,
           limit: _pageSize,
           lastDocumentCursor: null,
         );
@@ -158,6 +169,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
           searchQuery: current.searchQuery,
           customerLatitude: current.customerLatitude,
           customerLongitude: current.customerLongitude,
+          customerVillage: current.customerVillage,
+          customerBlock: current.customerBlock,
           limit: _pageSize,
           lastDocumentCursor: null,
         );
@@ -213,6 +226,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
           searchQuery: clean,
           customerLatitude: current.customerLatitude,
           customerLongitude: current.customerLongitude,
+          customerVillage: current.customerVillage,
+          customerBlock: current.customerBlock,
           limit: _pageSize,
           lastDocumentCursor: null,
         );
@@ -252,6 +267,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
         searchQuery: current.searchQuery,
         customerLatitude: current.customerLatitude,
         customerLongitude: current.customerLongitude,
+        customerVillage: current.customerVillage,
+        customerBlock: current.customerBlock,
         limit: _pageSize,
         lastDocumentCursor: current.lastDocumentCursor,
       );
@@ -263,9 +280,22 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
 
         final merged = List<ServiceProviderEntity>.from(current.providers)..addAll(newUnique);
 
-        // Maintain global nearest-first order across pagination batches
+        // Maintain global 3-tier + nearest-first order across pagination batches
         if (current.customerLatitude != null && current.customerLongitude != null) {
           merged.sort((a, b) {
+            final tierA = FirebaseCustomerDiscoveryRemoteDataSource.computeLocationMatchTier(
+              a,
+              customerVillage: current.customerVillage,
+              customerBlock: current.customerBlock,
+            );
+            final tierB = FirebaseCustomerDiscoveryRemoteDataSource.computeLocationMatchTier(
+              b,
+              customerVillage: current.customerVillage,
+              customerBlock: current.customerBlock,
+            );
+            final tierCmp = tierA.compareTo(tierB);
+            if (tierCmp != 0) return tierCmp;
+
             final distA = a.distanceKm ?? double.infinity;
             final distB = b.distanceKm ?? double.infinity;
             final cmp = distA.compareTo(distB);
@@ -316,6 +346,8 @@ class DiscoveryBloc extends Bloc<DiscoveryEvent, DiscoveryState> {
           searchQuery: event.intent.categoryId != null ? null : event.query,
           customerLatitude: current.customerLatitude,
           customerLongitude: current.customerLongitude,
+          customerVillage: current.customerVillage,
+          customerBlock: current.customerBlock,
           limit: _pageSize,
           lastDocumentCursor: null,
         );

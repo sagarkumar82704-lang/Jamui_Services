@@ -54,8 +54,9 @@ class MockProfessionalRemoteDataSource extends ProfessionalProviderRemoteDataSou
   }
 
   @override
-  Future<void> saveProduct(String shopId, Map<String, dynamic> productData, {String? productId}) async {
+  Future<String> saveProduct(String shopId, Map<String, dynamic> productData, {String? productId, double? costPrice, String? supplierName, String? purchaseNotes, num? initialStock, int? lowStockThreshold}) async {
     savedProducts.add({'shopId': shopId, 'productId': productId, ...productData});
+    return productId ?? 'mock_prod_1';
   }
 }
 

@@ -30,6 +30,8 @@ class TrackingCustomerDiscoveryRepository implements CustomerDiscoveryRepository
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
   }) async {
     getProvidersCallCount++;
     requestedCategoryIds.add(categoryId);
@@ -53,6 +55,8 @@ class TrackingCustomerDiscoveryRepository implements CustomerDiscoveryRepository
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
     int limit = 12,
     dynamic lastDocumentCursor,
   }) async {

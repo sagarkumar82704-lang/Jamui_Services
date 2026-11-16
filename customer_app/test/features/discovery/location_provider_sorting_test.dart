@@ -17,6 +17,9 @@ void main() {
       required double lat,
       required double lng,
       required double radiusKm,
+      String village = '',
+      String block = '',
+      String jamuiArea = 'जमुई',
       double rating = 4.8,
       int experienceYears = 5,
       String status = 'approved',
@@ -36,7 +39,9 @@ void main() {
         categoryTitle: 'इलेक्ट्रीशियन (Electrician)',
         visitingCharge: 150.0,
         experienceYears: experienceYears,
-        jamuiArea: 'जमुई',
+        jamuiArea: jamuiArea,
+        village: village,
+        block: block,
         latitude: lat,
         longitude: lng,
         serviceRadiusKm: radiusKm,
@@ -289,6 +294,126 @@ void main() {
       expect(merged[1].distanceKm, equals(1.8));
       expect(merged[2].distanceKm, equals(3.0));
       expect(merged[3].distanceKm, equals(5.0));
+    });
+
+    test('TEST 7: 3-Tier Priority Matching — (1) Same Village + Block -> (2) Same Block -> (3) GPS Distance', () {
+      // Customer in Village: "Garsanda", Block: "Khaira" (24.8550, 86.2200)
+      const custLat = 24.8550;
+      const custLng = 86.2200;
+
+      // Provider 1: Different block ("Jamui"), very close (~1.2km away) -> Tier 3
+      final provOtherBlockClose = createProvider(
+        id: 'prov_tier3_gps',
+        name: 'Other Block Close',
+        lat: 24.8650,
+        lng: 86.2200,
+        radiusKm: 15.0,
+        village: 'Maharajganj',
+        block: 'Jamui',
+      );
+
+      // Provider 2: Same block ("Khaira"), different village ("pakri"), ~2.0km away -> Tier 2
+      final provSameBlock = createProvider(
+        id: 'prov_tier2_block',
+        name: 'Same Block Provider',
+        lat: 24.8400,
+        lng: 86.2150,
+        radiusKm: 15.0,
+        village: 'Pakri',
+        block: 'Khaira',
+      );
+
+      // Provider 3: Same Village ("Garsanda") + Same Block ("Khaira"), ~2.5km away -> Tier 1
+      final provSameVillageAndBlock = createProvider(
+        id: 'prov_tier1_village_block',
+        name: 'Same Village & Block Provider',
+        lat: 24.8350,
+        lng: 86.2180,
+        radiusKm: 15.0,
+        village: 'Garsanda',
+        block: 'Khaira',
+      );
+
+      final dataSource = FirebaseCustomerDiscoveryRemoteDataSource();
+      final processed = dataSource.filterAndSortProviders(
+        providers: [provOtherBlockClose, provSameBlock, provSameVillageAndBlock],
+        customerLatitude: custLat,
+        customerLongitude: custLng,
+        customerVillage: 'Garsanda',
+        customerBlock: 'Khaira',
+      );
+
+      expect(processed.length, equals(3));
+      expect(processed[0].id, equals('prov_tier1_village_block'),
+          reason: 'Priority 1: Same Village + Same Block must come first');
+      expect(processed[1].id, equals('prov_tier2_block'),
+          reason: 'Priority 2: Same Block must come second');
+      expect(processed[2].id, equals('prov_tier3_gps'),
+          reason: 'Priority 3: Other nearby eligible providers come third');
+    });
+
+    test('TEST 8: Same Block matching (Priority 2) when customer Village is missing, sorted by distance within block', () {
+      const custLat = 24.7733;
+      const custLng = 86.3778;
+
+      final jhajhaBlockFarther = createProvider(
+        id: 'jhajha_farther',
+        name: 'Jhajha Block 3km',
+        lat: 24.7950,
+        lng: 86.3800,
+        radiusKm: 15.0,
+        block: 'Jhajha',
+      );
+
+      final jhajhaBlockCloser = createProvider(
+        id: 'jhajha_closer',
+        name: 'Jhajha Block 1km',
+        lat: 24.7800,
+        lng: 86.3780,
+        radiusKm: 15.0,
+        block: 'Jhajha',
+      );
+
+      final sonoBlockProvider = createProvider(
+        id: 'sono_block',
+        name: 'Sono Block 1.5km',
+        lat: 24.7620,
+        lng: 86.3750,
+        radiusKm: 15.0,
+        block: 'Sono',
+      );
+
+      final dataSource = FirebaseCustomerDiscoveryRemoteDataSource();
+      final processed = dataSource.filterAndSortProviders(
+        providers: [sonoBlockProvider, jhajhaBlockFarther, jhajhaBlockCloser],
+        customerLatitude: custLat,
+        customerLongitude: custLng,
+        customerVillage: '',
+        customerBlock: 'Jhajha',
+      );
+
+      expect(processed.map((e) => e.id).toList(), equals(['jhajha_closer', 'jhajha_farther', 'sono_block']));
+    });
+
+    test('TEST 9: Missing Block/Village fields do not fail discovery and return empty list when no providers are in radius', () {
+      final farProvider = createProvider(
+        id: 'prov_50km_away',
+        name: 'Far Away Provider',
+        lat: 25.4000,
+        lng: 86.6000,
+        radiusKm: 10.0,
+      );
+
+      final dataSource = FirebaseCustomerDiscoveryRemoteDataSource();
+      final emptyResult = dataSource.filterAndSortProviders(
+        providers: [farProvider],
+        customerLatitude: customerLat,
+        customerLongitude: customerLng,
+        customerVillage: '',
+        customerBlock: '',
+      );
+
+      expect(emptyResult, isEmpty, reason: 'No nearby providers within radius must return clean empty list');
     });
   });
 }

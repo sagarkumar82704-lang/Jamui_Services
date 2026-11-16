@@ -12,6 +12,8 @@ abstract class CustomerDiscoveryRepository {
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
   });
 
   /// True server/database cursor pagination
@@ -22,6 +24,8 @@ abstract class CustomerDiscoveryRepository {
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
     int limit = 12,
     dynamic lastDocumentCursor,
   });

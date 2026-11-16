@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:apna_jamui_customer/core/config/app_environment.dart';
+import 'package:apna_jamui_customer/features/provider_portal/presentation/pages/provider_webview_screen.dart';
 import 'package:apna_jamui_provider/features/auth/domain/entities/custom_service_application_entity.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -31,19 +33,6 @@ class FakeProviderRepository implements ProviderRepository {
 
   @override
   Future<void> signOut() async {}
-
-  @override
-  Future<void> sendPhoneOtp({
-    required String phoneNumber,
-    required void Function(String verificationId, int? resendToken) onCodeSent,
-    required void Function(String errorMessage) onError,
-    required void Function(PhoneAuthCredential credential) onVerificationCompleted,
-  }) async {}
-
-  @override
-  Future<UserCredential> verifyOtpCode({required String verificationId, required String smsCode}) async {
-    throw UnimplementedError();
-  }
 
   @override
   Future<ProviderProfileEntity?> getProfile(String providerId) async => null;
@@ -91,19 +80,6 @@ class FakeProviderRepository implements ProviderRepository {
   }
 
   @override
-  Future<User> linkEmailPasswordCredential({
-    required String email,
-    required String password,
-  }) => throw UnimplementedError();
-
-  @override
-  Future<ProviderProfileEntity> safeMigratePhoneAccount({
-    required String providerId,
-    required String email,
-    required String password,
-  }) => throw UnimplementedError();
-
-  @override
   Future<void> submitCustomServiceApplication(CustomServiceApplicationEntity application) {
     // TODO: implement submitCustomServiceApplication
     throw UnimplementedError();
@@ -140,11 +116,85 @@ void main() {
     tearDown(() {
       RemoteConfigService.mockForceUpdateStream = null;
       RemoteConfigService.mockIsForceUpdateRequired = null;
+      AppEnvironmentConfig.testOverride = null;
     });
 
-    test('ProviderAppLauncherService has valid web and package identifiers', () {
-      expect(ProviderAppLauncherService.providerWebUrl, equals('https://jamui-provider.web.app'));
+    test('ProviderAppLauncherService resolves URLs based on environment', () {
+      AppEnvironmentConfig.testOverride = AppEnvironment.staging;
+      expect(
+        ProviderAppLauncherService.providerWebUrl,
+        equals('https://jamui-services-staging-provider.web.app'),
+      );
+
+      AppEnvironmentConfig.testOverride = AppEnvironment.production;
+      expect(
+        ProviderAppLauncherService.providerWebUrl,
+        equals('https://jamui-provider.web.app'),
+      );
+
+      AppEnvironmentConfig.testOverride = AppEnvironment.emulator;
+      expect(
+        ProviderAppLauncherService.providerWebUrl,
+        equals('http://10.0.2.2:64343'),
+      );
+
       expect(ProviderAppLauncherService.providerPackageName, equals('com.jamuiservice.provider'));
+    });
+
+    test('ProviderWebViewScreen isolates staging and production trusted hosts', () {
+      // Staging isolation verification
+      AppEnvironmentConfig.testOverride = AppEnvironment.staging;
+      expect(
+        ProviderWebViewScreen.trustedHostsForTesting,
+        equals({
+          'jamui-services-staging-provider.web.app',
+          'jamui-services-staging-provider.firebaseapp.com',
+        }),
+      );
+      expect(
+        ProviderWebViewScreen.isTrustedUrlForTesting('https://jamui-services-staging-provider.web.app/orders'),
+        isTrue,
+      );
+      expect(
+        ProviderWebViewScreen.isTrustedUrlForTesting('https://jamui-services-staging-provider.firebaseapp.com/#/dashboard'),
+        isTrue,
+      );
+      // Staging MUST reject production URLs
+      expect(
+        ProviderWebViewScreen.isTrustedUrlForTesting('https://jamui-provider.web.app/orders'),
+        isFalse,
+      );
+      expect(
+        ProviderWebViewScreen.isTrustedUrlForTesting('https://jamui-provider.firebaseapp.com'),
+        isFalse,
+      );
+      expect(
+        ProviderWebViewScreen.isTrustedUrlForTesting('https://malicious-site.example.com'),
+        isFalse,
+      );
+
+      // Production isolation verification
+      AppEnvironmentConfig.testOverride = AppEnvironment.production;
+      expect(
+        ProviderWebViewScreen.trustedHostsForTesting,
+        equals({
+          'jamui-provider.web.app',
+          'jamui-provider.firebaseapp.com',
+        }),
+      );
+      expect(
+        ProviderWebViewScreen.isTrustedUrlForTesting('https://jamui-provider.web.app/orders'),
+        isTrue,
+      );
+      // Production MUST reject staging URLs
+      expect(
+        ProviderWebViewScreen.isTrustedUrlForTesting('https://jamui-services-staging-provider.web.app/orders'),
+        isFalse,
+      );
+      expect(
+        ProviderWebViewScreen.isTrustedUrlForTesting('https://jamui-services-staging-provider.firebaseapp.com'),
+        isFalse,
+      );
     });
 
     testWidgets('ProviderNativeHostScreen instantiates cleanly with fake repo', (WidgetTester tester) async {

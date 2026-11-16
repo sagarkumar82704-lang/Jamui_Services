@@ -1,5 +1,4 @@
 import 'package:equatable/equatable.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../../domain/entities/customer_entity.dart';
 
 abstract class CustomerAuthEvent extends Equatable {
@@ -11,52 +10,6 @@ abstract class CustomerAuthEvent extends Equatable {
 
 class CheckCustomerAuthStatusEvent extends CustomerAuthEvent {
   const CheckCustomerAuthStatusEvent();
-}
-
-class SendCustomerPhoneOtpEvent extends CustomerAuthEvent {
-  final String phoneNumber;
-  final int? resendToken;
-  const SendCustomerPhoneOtpEvent(this.phoneNumber, {this.resendToken});
-
-  @override
-  List<Object?> get props => [phoneNumber, resendToken];
-}
-
-class CustomerOtpCodeSentEvent extends CustomerAuthEvent {
-  final String verificationId;
-  final int? resendToken;
-  final String phoneNumber;
-
-  const CustomerOtpCodeSentEvent({
-    required this.verificationId,
-    this.resendToken,
-    required this.phoneNumber,
-  });
-
-  @override
-  List<Object?> get props => [verificationId, resendToken, phoneNumber];
-}
-
-class VerifyCustomerPhoneOtpEvent extends CustomerAuthEvent {
-  final String verificationId;
-  final String smsCode;
-
-  const VerifyCustomerPhoneOtpEvent({
-    required this.verificationId,
-    required this.smsCode,
-  });
-
-  @override
-  List<Object?> get props => [verificationId, smsCode];
-}
-
-class CustomerAutoVerifiedEvent extends CustomerAuthEvent {
-  final PhoneAuthCredential credential;
-
-  const CustomerAutoVerifiedEvent(this.credential);
-
-  @override
-  List<Object?> get props => [credential];
 }
 
 class CheckCustomerProfilesAfterAuthEvent extends CustomerAuthEvent {
@@ -117,19 +70,6 @@ class RegisterWithEmailEvent extends CustomerAuthEvent {
         latitude,
         longitude,
       ];
-}
-
-class LinkEmailToPhoneAccountEvent extends CustomerAuthEvent {
-  final String email;
-  final String password;
-
-  const LinkEmailToPhoneAccountEvent({
-    required this.email,
-    required this.password,
-  });
-
-  @override
-  List<Object?> get props => [email, password];
 }
 
 

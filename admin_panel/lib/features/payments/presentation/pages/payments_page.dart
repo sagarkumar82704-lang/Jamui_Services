@@ -113,6 +113,80 @@ class _PaymentsPageState extends State<PaymentsPage> {
         debugPrint('⚠️ [PaymentsPage] Direct pending payments query notice: $pendErr');
       }
 
+      // Fetch Professional Seller Payments from diamond_payments (Marketplace)
+      List<Map<String, dynamic>> rawDiamondPayments = [];
+      try {
+        final diamondPaySnap = await _firestore
+            .collection('diamond_payments')
+            .orderBy('createdAt', descending: true)
+            .limit(300)
+            .get();
+        rawDiamondPayments = diamondPaySnap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      } catch (dPayErr) {
+        debugPrint('⚠️ [PaymentsPage] Ordered diamond_payments query failed, falling back: $dPayErr');
+        try {
+          final diamondPaySnap = await _firestore.collection('diamond_payments').limit(300).get();
+          rawDiamondPayments = diamondPaySnap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+        } catch (e) {
+          debugPrint('⚠️ [PaymentsPage] diamond_payments fetch error: $e');
+        }
+      }
+
+      // Fetch Professional Shops for relational mapping
+      Map<String, Map<String, dynamic>> diamondShopsById = {};
+      try {
+        final diamondShopSnap = await _firestore.collection('diamond_shops').get();
+        for (final d in diamondShopSnap.docs) {
+          diamondShopsById[d.id] = {'id': d.id, ...d.data()};
+        }
+      } catch (dShopErr) {
+        debugPrint('⚠️ [PaymentsPage] diamond_shops fetch error: $dShopErr');
+      }
+
+      // Ingest and normalize Professional Seller Payments into loadedPayments
+      for (final dp in rawDiamondPayments) {
+        final sId = (dp['shopId'] ?? dp['ownerUid'] ?? '').toString();
+        final shop = diamondShopsById[sId] ?? {};
+        final oId = (dp['orderId'] ?? dp['id'] ?? '').toString();
+        final payId = (dp['paymentId'] ?? '').toString();
+        final rawStatus = (dp['status'] ?? 'pending').toString().toLowerCase();
+        final normalizedStatus = rawStatus == 'activated' ? 'success' : rawStatus;
+        final isSuccess = normalizedStatus == 'success';
+        final amount = (dp['amount'] as num?)?.toDouble() ?? 0.0;
+        final shopName = (shop['shopName'] ?? dp['shopName'] ?? 'Pro Store').toString();
+        final ownerName = (shop['ownerName'] ?? dp['ownerName'] ?? 'Seller').toString();
+
+        loadedPayments.add({
+          ...dp,
+          'id': dp['id'] ?? oId,
+          'orderId': oId,
+          'paymentId': payId,
+          'providerId': sId,
+          'shopId': sId,
+          'providerName': '$shopName ($ownerName)',
+          'shopName': shopName,
+          'userName': ownerName,
+          'planName': (dp['planName'] ?? 'Basic (Pro)').toString(),
+          'planTier': 'professional',
+          'amount': amount,
+          'status': normalizedStatus,
+          'captured': isSuccess,
+          'liveVerified': isSuccess,
+          'signature': isSuccess ? 'server_verified' : '',
+          'type': 'professional_subscription',
+          'isProfessional': true,
+          'adminApprovalStatus': isSuccess ? 'approved' : 'none',
+        });
+      }
+
+      // Sort loadedPayments chronologically descending
+      loadedPayments.sort((a, b) {
+        final aDate = _extractDateTime(a['createdAt'] ?? a['verifiedAt']);
+        final bDate = _extractDateTime(b['createdAt'] ?? b['verifiedAt']);
+        if (aDate != null && bDate != null) return bDate.compareTo(aDate);
+        return 0;
+      });
+
       // Index payments by orderId and providerId for fast, authoritative relational lookup
       final Map<String, Map<String, dynamic>> latestPaymentByProviderId = {};
       final Map<String, Map<String, dynamic>> pendingApprovalPaymentByProviderId = {};
@@ -275,6 +349,88 @@ class _PaymentsPageState extends State<PaymentsPage> {
               'status': provProfile['status'] ?? 'pendingReview',
             });
           }
+        }
+
+        // Ingest Professional Shops with their active/historical subscriptions into loadedProviders
+        for (final entry in diamondShopsById.entries) {
+          final sId = entry.key;
+          final shop = entry.value;
+          final isSubActive = shop['isSubscriptionActive'] == true;
+
+          final shopPayments = rawDiamondPayments.where((p) =>
+              (p['shopId'] ?? p['ownerUid'] ?? '').toString() == sId).toList();
+          shopPayments.sort((a, b) {
+            final aT = _extractDateTime(a['createdAt'] ?? a['verifiedAt']);
+            final bT = _extractDateTime(b['createdAt'] ?? b['verifiedAt']);
+            if (aT != null && bT != null) return bT.compareTo(aT);
+            return 0;
+          });
+          final latestShopPay = shopPayments.isNotEmpty ? shopPayments.first : null;
+
+          final storedOrderId = (shop['paymentOrderId'] ?? latestShopPay?['orderId'] ?? latestShopPay?['id'] ?? '-').toString();
+          final payId = (shop['paymentId'] ?? latestShopPay?['paymentId'] ?? '-').toString();
+          final amount = (shop['paymentAmount'] as num?)?.toDouble() ??
+              (latestShopPay?['amount'] as num?)?.toDouble() ??
+              0.0;
+
+          DateTime? expiry;
+          final rawExpiry = shop['subscriptionExpiry'];
+          if (rawExpiry is Timestamp) {
+            expiry = rawExpiry.toDate();
+          } else if (rawExpiry != null) {
+            expiry = DateTime.tryParse(rawExpiry.toString());
+          }
+
+          final hasValidSubscription = isSubActive && expiry != null && expiry.isAfter(now);
+          if (hasValidSubscription) {
+            activePaid++;
+          } else if (shop['status'] == 'approved') {
+            unpaidPending++;
+          }
+
+          if (expiry != null) {
+            final diff = expiry.difference(now).inDays;
+            if (diff < 0 || diff <= 7) {
+              expiringExpired++;
+            }
+          }
+
+          if (storedOrderId.isNotEmpty && storedOrderId != '-') {
+            coveredOrderIds.add(storedOrderId);
+          }
+
+          final isPaySuccess = isSubActive || (latestShopPay?['status'] == 'activated');
+          final shopName = (shop['shopName'] ?? 'Pro Store').toString();
+          final ownerName = (shop['ownerName'] ?? 'Seller').toString();
+          final planName = (shop['subscriptionPlanName'] ?? latestShopPay?['planName'] ?? 'Basic').toString();
+
+          loadedProviders.add({
+            ...shop,
+            'id': sId,
+            'providerId': sId,
+            'name': '$shopName ($ownerName)',
+            'businessName': shopName,
+            'ownerName': ownerName,
+            'phone': (shop['ownerPhone'] ?? shop['contactPhone'] ?? shop['phone'] ?? '-').toString(),
+            'email': (shop['ownerEmail'] ?? '-').toString(),
+            'paymentOrderId': storedOrderId,
+            'paymentId': payId,
+            'paymentAmount': amount,
+            'paymentStatus': isPaySuccess ? 'success' : 'unpaid',
+            'paymentDateTime': _extractDateTime(shop['subscriptionActivatedAt'] ?? latestShopPay?['verifiedAt'] ?? latestShopPay?['createdAt']),
+            'subscriptionPlan': '$planName (Pro)',
+            'planTier': 'professional',
+            'subscriptionExpiryDate': expiry,
+            'subscriptionApprovalStatus': 'approved',
+            'adminApprovalStatus': 'approved',
+            'paymentVerified': isPaySuccess,
+            'captured': isPaySuccess,
+            'liveVerified': isPaySuccess,
+            'isConsumed': true,
+            'isSubscriptionActive': isSubActive,
+            'isProfessionalSeller': true,
+            'status': shop['status'] ?? 'approved',
+          });
         }
 
         // Priority sort: pending_approval first, then verified success, then recent date
@@ -740,13 +896,15 @@ class _PaymentsPageState extends State<PaymentsPage> {
           approvalStatus == 'pending_approval' &&
           !isConsumed;
 
-      // Tier Filter Enforcement (Normal vs Premium)
+      // Tier Filter Enforcement (Normal vs Premium vs Professional)
       if (_selectedTierFilter != 'all') {
         final tier = (p['planTier'] ?? p['subscriptionPlanTier'] ?? 'normal').toString().toLowerCase();
         if (_selectedTierFilter == 'normal') {
           if (tier != 'normal' && tier.isNotEmpty) return false;
         } else if (_selectedTierFilter == 'premium') {
           if (tier != 'premium') return false;
+        } else if (_selectedTierFilter == 'professional') {
+          if (tier != 'professional') return false;
         }
       }
 
@@ -1135,6 +1293,11 @@ class _PaymentsPageState extends State<PaymentsPage> {
 
                 _buildDetailRow('रेजरपे आर्डर आईडी (Order ID)', orderId, canCopy: true),
                 _buildDetailRow('रेजरपे पेमेंट आईडी (Payment ID)', paymentId, canCopy: true),
+                if (item['isProfessional'] == true) ...[
+                  _buildDetailRow('दुकान का प्रकार (Store Type)', '💎 Professional Seller Marketplace', badgeColor: Colors.purple),
+                  if (item['shopName'] != null)
+                    _buildDetailRow('स्टोर का नाम (Store Name)', item['shopName'].toString()),
+                ],
                 _buildDetailRow('सर्विस प्रोवाइडर (Provider)', providerName),
                 _buildDetailRow('प्रोवाइडर आईडी (Provider UID)', providerId, canCopy: true),
                 _buildDetailRow('सब्सक्रिप्शन प्लान (Plan)', planName),
@@ -1767,6 +1930,7 @@ class _PaymentsPageState extends State<PaymentsPage> {
                         DropdownMenuItem(value: 'all', child: Text('सभी श्रेणियां (All Tiers)')),
                         DropdownMenuItem(value: 'normal', child: Text('📦 केवल Normal प्लान्स')),
                         DropdownMenuItem(value: 'premium', child: Text('⭐ केवल Premium प्लान्स')),
+                        DropdownMenuItem(value: 'professional', child: Text('💎 केवल Professional Seller')),
                       ],
                       onChanged: (val) {
                         if (val != null) {
@@ -2021,30 +2185,48 @@ class _PaymentsPageState extends State<PaymentsPage> {
                                 ),
                               ),
                               const SizedBox(height: 3),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                                decoration: BoxDecoration(
-                                  color: (p['isRenewal'] == true || p['isRenewalEligible'] == true)
-                                      ? Colors.orange.shade50
-                                      : Colors.blue.shade50,
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(
+                              if (p['isProfessionalSeller'] == true || p['planTier'] == 'professional')
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: Colors.purple.shade50,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.purple.shade300),
+                                  ),
+                                  child: Text(
+                                    '💎 प्रो सेलर (Marketplace)',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.purple.shade900,
+                                    ),
+                                  ),
+                                )
+                              else
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                  decoration: BoxDecoration(
                                     color: (p['isRenewal'] == true || p['isRenewalEligible'] == true)
-                                        ? Colors.orange.shade300
-                                        : Colors.blue.shade300,
+                                        ? Colors.orange.shade50
+                                        : Colors.blue.shade50,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: (p['isRenewal'] == true || p['isRenewalEligible'] == true)
+                                          ? Colors.orange.shade300
+                                          : Colors.blue.shade300,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    (p['isRenewal'] == true || p['isRenewalEligible'] == true) ? 'रिन्यूअल (Renewal)' : 'नया (New Sub)',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: (p['isRenewal'] == true || p['isRenewalEligible'] == true)
+                                          ? Colors.orange.shade900
+                                          : Colors.blue.shade900,
+                                    ),
                                   ),
                                 ),
-                                child: Text(
-                                  (p['isRenewal'] == true || p['isRenewalEligible'] == true) ? 'रिन्यूअल (Renewal)' : 'नया (New Sub)',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold,
-                                    color: (p['isRenewal'] == true || p['isRenewalEligible'] == true)
-                                        ? Colors.orange.shade900
-                                        : Colors.blue.shade900,
-                                  ),
-                                ),
-                              ),
                             ],
                           ),
                         ),
@@ -2443,7 +2625,24 @@ class _PaymentsPageState extends State<PaymentsPage> {
                         DataCell(
                           ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 160),
-                            child: Text(providerName, overflow: TextOverflow.ellipsis),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(providerName, overflow: TextOverflow.ellipsis),
+                                if (p['isProfessional'] == true)
+                                  Container(
+                                    margin: const EdgeInsets.only(top: 2),
+                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Colors.purple.shade50,
+                                      borderRadius: BorderRadius.circular(3),
+                                      border: Border.all(color: Colors.purple.shade200),
+                                    ),
+                                    child: const Text('💎 Pro Seller', style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.purple)),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                         DataCell(

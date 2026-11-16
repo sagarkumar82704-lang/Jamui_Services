@@ -24,6 +24,7 @@ import '../../../analytics/presentation/pages/analytics_page.dart';
 import '../../../ai_insights/presentation/pages/ai_insights_page.dart';
 import '../../../admins/presentation/pages/admins_page.dart';
 import '../../../professional_admin/presentation/pages/professional_admin_dashboard_page.dart';
+import '../../../professional_admin/presentation/pages/professional_admin_plans_page.dart';
 import '../../../audit_logs/presentation/pages/audit_logs_page.dart';
 import '../../../settings/presentation/pages/settings_page.dart';
 
@@ -43,6 +44,8 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
       case 'professional_dashboard':
       case 'diamond_dashboard':
         return const ProfessionalAdminDashboardPage();
+      case 'professional_plans':
+        return const ProfessionalAdminPlansPage();
       case 'dashboard':
         return const DashboardPage();
       case 'customers':
@@ -89,6 +92,8 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
       case 'professional_dashboard':
       case 'diamond_dashboard':
         return 'Professional (Pro) Operations';
+      case 'professional_plans':
+        return 'Professional Subscription Plans';
       case 'dashboard':
         return 'Dashboard Overview';
       case 'customers':

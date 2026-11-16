@@ -153,15 +153,19 @@ class _OtherServiceDetailsModalState extends State<OtherServiceDetailsModal> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.9,
-      ),
-      padding: EdgeInsets.fromLTRB(20, 16, 20, 20 + bottomInset),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 640,
+          maxHeight: MediaQuery.of(context).size.height * 0.9,
+        ),
+        child: Container(
+          padding: EdgeInsets.fromLTRB(20, 16, 20, 20 + bottomInset),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
       child: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -431,6 +435,8 @@ class _OtherServiceDetailsModalState extends State<OtherServiceDetailsModal> {
               ),
             ],
           ),
+        ),
+      ),
         ),
       ),
     );

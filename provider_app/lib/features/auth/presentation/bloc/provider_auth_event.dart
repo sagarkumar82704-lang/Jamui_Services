@@ -113,23 +113,6 @@ class UploadProfilePhotoEvent extends ProviderAuthEvent {
   List<Object?> get props => [imageFile];
 }
 
-class SendProviderOtpEvent extends ProviderAuthEvent {
-  final String phoneNumber;
-  const SendProviderOtpEvent(this.phoneNumber);
-
-  @override
-  List<Object?> get props => [phoneNumber];
-}
-
-class VerifyProviderOtpEvent extends ProviderAuthEvent {
-  final String verificationId;
-  final String smsCode;
-  const VerifyProviderOtpEvent({required this.verificationId, required this.smsCode});
-
-  @override
-  List<Object?> get props => [verificationId, smsCode];
-}
-
 class SubmitCustomServiceApplicationEvent extends ProviderAuthEvent {
   final CustomServiceApplicationEntity application;
   const SubmitCustomServiceApplicationEvent(this.application);
@@ -158,21 +141,6 @@ class SubmitCategoryChangeRequestEvent extends ProviderAuthEvent {
         requestedCategoryTitle,
         customServiceDetails,
       ];
-}
-
-class MigratePhoneAccountEvent extends ProviderAuthEvent {
-  final String providerId;
-  final String email;
-  final String password;
-
-  const MigratePhoneAccountEvent({
-    required this.providerId,
-    required this.email,
-    required this.password,
-  });
-
-  @override
-  List<Object?> get props => [providerId, email, password];
 }
 
 

@@ -83,15 +83,20 @@ class _IncomingLeadAlertModalState extends State<IncomingLeadAlertModal>
   Widget build(BuildContext context) {
     final progress = _remainingSeconds / 60.0;
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.all(24),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
           // Ringing Pulse Animation Icon
           ScaleTransition(
             scale: Tween<double>(begin: 0.9, end: 1.15).animate(
@@ -152,10 +157,15 @@ class _IncomingLeadAlertModalState extends State<IncomingLeadAlertModal>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      widget.lead.customerName,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    Expanded(
+                      child: Text(
+                        widget.lead.customerName,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
@@ -238,6 +248,9 @@ class _IncomingLeadAlertModalState extends State<IncomingLeadAlertModal>
             ],
           ),
         ],
+      ),
+          ),
+        ),
       ),
     );
   }

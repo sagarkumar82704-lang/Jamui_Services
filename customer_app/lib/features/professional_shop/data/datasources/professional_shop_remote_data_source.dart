@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -6,8 +7,25 @@ import '../../domain/entities/paginated_shops_result.dart';
 import '../../domain/entities/professional_category_entity.dart';
 import '../../domain/entities/professional_order_entity.dart';
 import '../../domain/entities/professional_product_entity.dart';
+import '../../domain/entities/product_variant_entity.dart';
 import '../../domain/entities/professional_shop_entity.dart';
 import 'professional_shop_cache_manager.dart';
+
+class PlaceOrderResult {
+  final String orderId; // Internal Firestore Document ID (Used for database lookups and streams)
+  final String orderNumber; // Public Platform Online Order ID (e.g. JS-284731)
+  final String? sellerOrderNumber; // Shop-scoped Seller Order Number (e.g. SGJ-019)
+  final String channelId; // Channel ID (e.g. JAMUI_SERVICES)
+  final bool isDuplicate; // Whether this was resolved via idempotent return
+
+  const PlaceOrderResult({
+    required this.orderId,
+    required this.orderNumber,
+    this.sellerOrderNumber,
+    this.channelId = 'JAMUI_SERVICES',
+    this.isDuplicate = false,
+  });
+}
 
 class ProfessionalShopRemoteDataSource {
   final FirebaseFirestore? _customFirestore;
@@ -444,29 +462,50 @@ class ProfessionalShopRemoteDataSource {
   Future<ProfessionalShopEntity?> fetchShopById(String shopId) => fetchShopDetails(shopId);
 
   Future<List<ProfessionalProductEntity>> fetchShopProducts(String shopId, {String? category}) async {
+    // Strictly query authoritative collection: diamond_shops/{shopId}/products
+    // with mandatory security filters: isAvailable == true && isDeleted == false
+    final query = _firestore
+        .collection(collectionShops)
+        .doc(shopId)
+        .collection('products')
+        .where('isAvailable', isEqualTo: true)
+        .where('isDeleted', isEqualTo: false);
+
+    final QuerySnapshot snap;
     try {
-      Query query = _firestore.collection(collectionShops).doc(shopId).collection('products');
-      if (category != null && category.isNotEmpty && category != 'All' && category != 'सभी उत्पाद') {
-        query = query.where('categoryName', isEqualTo: category);
+      snap = await query.get().timeout(const Duration(seconds: 8));
+    } on FirebaseException catch (fe) {
+      debugPrint('❌ [ProfessionalShopRemoteDataSource] Firestore error: ${fe.code} - ${fe.message}');
+      if (fe.code == 'permission-denied') {
+        throw Exception('इस दुकान के उत्पाद देखने की अनुमति नहीं है या दुकान अभी लाइव नहीं है।');
+      } else if (fe.code == 'failed-precondition') {
+        throw Exception('सिस्टम इंडेक्स अपडेट हो रहा है। कृपया कुछ क्षण बाद पुनः प्रयास करें।');
+      } else {
+        throw Exception('उत्पाद लोड करने में समस्या: ${fe.message ?? fe.code}');
       }
-
-      QuerySnapshot snap = await query.get().timeout(const Duration(seconds: 6));
-
-      if (snap.docs.isEmpty) {
-        Query fallbackQuery = _firestore.collection(legacyCollectionShops).doc(shopId).collection('products');
-        if (category != null && category.isNotEmpty && category != 'All' && category != 'सभी उत्पाद') {
-          fallbackQuery = fallbackQuery.where('categoryName', isEqualTo: category);
-        }
-        snap = await fallbackQuery.get().timeout(const Duration(seconds: 6));
-      }
-
-      return snap.docs
-          .map((doc) => ProfessionalProductEntity.fromMap(doc.data() as Map<String, dynamic>, doc.id, shopId))
-          .where((p) => p.isActive && !p.isDeleted)
-          .toList();
-    } catch (_) {
-      return [];
+    } on TimeoutException {
+      debugPrint('❌ [ProfessionalShopRemoteDataSource] Timeout fetching products for $shopId');
+      throw Exception('नेटवर्क धीमा है। कृपया पुनः प्रयास करें।');
+    } catch (e) {
+      debugPrint('❌ [ProfessionalShopRemoteDataSource] Unexpected error fetching products: $e');
+      throw Exception('उत्पाद लोड नहीं हो सके। कृपया अपना इंटरनेट जांचें।');
     }
+
+    var items = snap.docs
+        .map((doc) => ProfessionalProductEntity.fromMap(doc.data() as Map<String, dynamic>, doc.id, shopId))
+        .where((p) => p.isActive && !p.isDeleted)
+        .toList();
+
+    if (category != null && category.isNotEmpty && category != 'All' && category != 'सभी उत्पाद') {
+      final catLower = category.toLowerCase().trim();
+      items = items.where((p) {
+        final pCat = p.categoryName.toLowerCase().trim();
+        final pStoreCat = p.storeCategoryName.toLowerCase().trim();
+        return pCat == catLower || pStoreCat == catLower;
+      }).toList();
+    }
+
+    return items;
   }
 
   Future<List<String>> fetchShopProductCategories(String shopId) async {
@@ -520,13 +559,16 @@ class ProfessionalShopRemoteDataSource {
     return [];
   }
 
-  Future<String> placeOrder(ProfessionalOrderEntity order) async {
+  Future<PlaceOrderResult> placeOrder(ProfessionalOrderEntity order) async {
     try {
       final callable = _functions.httpsCallable('placeDiamondOrder');
       final payload = {
         'shopId': order.shopId,
         'items': order.items.map((it) => {
           'productId': it.productId,
+          if (it.title.isNotEmpty) 'title': it.title,
+          if (it.variantId != null && it.variantId!.isNotEmpty) 'variantId': it.variantId,
+          if (it.variantTitle != null && it.variantTitle!.isNotEmpty) 'variantTitle': it.variantTitle,
           'quantity': it.quantity,
         }).toList(),
         'deliveryMethod': order.fulfillmentType,
@@ -541,12 +583,25 @@ class ProfessionalShopRemoteDataSource {
               }
             : null,
         'customerNotes': order.customerNotes,
-        'idempotencyKey': 'ord_${order.customerId}_${order.shopId}_${order.createdAt.millisecondsSinceEpoch}',
+        'idempotencyKey': order.idempotencyKey ??
+            'ord_${order.customerId}_${order.shopId}_${order.createdAt.millisecondsSinceEpoch}',
       };
 
       final response = await callable.call(payload);
       final data = response.data as Map<dynamic, dynamic>? ?? {};
-      return (data['orderId'] ?? data['orderNumber'] ?? order.orderId).toString();
+      final docId = (data['orderId'] ?? order.orderId).toString();
+      final num = (data['orderNumber'] ?? docId).toString();
+      final sellerNum = data['sellerOrderNumber']?.toString();
+      final chan = (data['channelId'] ?? 'JAMUI_SERVICES').toString();
+      final isDup = data['isDuplicate'] == true;
+
+      return PlaceOrderResult(
+        orderId: docId,
+        orderNumber: num,
+        sellerOrderNumber: sellerNum,
+        channelId: chan,
+        isDuplicate: isDup,
+      );
     } on FirebaseFunctionsException catch (fe) {
       throw Exception(fe.message ?? 'Order placement failed: ${fe.code}');
     } catch (e) {
@@ -586,6 +641,34 @@ class ProfessionalShopRemoteDataSource {
           .map((d) => ProfessionalOrderEntity.fromMap(d.data(), d.id))
           .toList();
     } catch (_) {
+      return [];
+    }
+  }
+
+  /// Fetches authoritative active variants for a product in subcollection:
+  /// `diamond_shops/{shopId}/products/{productId}/variants`
+  Future<List<ProductVariantEntity>> fetchProductVariants(String shopId, String productId) async {
+    try {
+      final snap = await _firestore
+          .collection(collectionShops)
+          .doc(shopId)
+          .collection('products')
+          .doc(productId)
+          .collection('variants')
+          .where('isActive', isEqualTo: true)
+          .get()
+          .timeout(const Duration(seconds: 5));
+
+      return snap.docs
+          .map((d) => ProductVariantEntity.fromMap(
+                d.data(),
+                d.id,
+                productId: productId,
+                shopId: shopId,
+              ))
+          .toList();
+    } catch (e) {
+      debugPrint('[fetchProductVariants] Failed to load variants for $productId: $e');
       return [];
     }
   }

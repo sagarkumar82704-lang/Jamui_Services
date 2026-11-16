@@ -23,31 +23,6 @@ abstract class ProviderRemoteDataSource {
   Future<void> signOut();
   User? getCurrentFirebaseUser();
 
-  // Credential Linking & Safe Migration
-  Future<User> linkEmailPasswordCredential({
-    required String email,
-    required String password,
-  });
-
-  Future<ProviderProfileModel> safeMigratePhoneAccount({
-    required String providerId,
-    required String email,
-    required String password,
-  });
-
-  // Phone OTP Operations
-  Future<void> sendPhoneOtp({
-    required String phoneNumber,
-    required void Function(String verificationId, int? resendToken) onCodeSent,
-    required void Function(String errorMessage) onError,
-    required void Function(PhoneAuthCredential credential) onVerificationCompleted,
-  });
-
-  Future<UserCredential> verifyOtpCode({
-    required String verificationId,
-    required String smsCode,
-  });
-
   // Firestore Profile Operations
   Future<ProviderProfileModel?> getProviderProfile(String id);
   Future<ProviderProfileModel?> findRegisteredProviderByPhone(String rawPhoneNumber);

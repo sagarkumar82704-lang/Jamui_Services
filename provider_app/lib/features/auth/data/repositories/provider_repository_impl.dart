@@ -60,56 +60,6 @@ class ProviderRepositoryImpl implements ProviderRepository {
   }
 
   @override
-  Future<User> linkEmailPasswordCredential({
-    required String email,
-    required String password,
-  }) async {
-    return await remoteDataSource.linkEmailPasswordCredential(
-      email: email,
-      password: password,
-    );
-  }
-
-  @override
-  Future<ProviderProfileEntity> safeMigratePhoneAccount({
-    required String providerId,
-    required String email,
-    required String password,
-  }) async {
-    return await remoteDataSource.safeMigratePhoneAccount(
-      providerId: providerId,
-      email: email,
-      password: password,
-    );
-  }
-
-  @override
-  Future<void> sendPhoneOtp({
-    required String phoneNumber,
-    required void Function(String verificationId, int? resendToken) onCodeSent,
-    required void Function(String errorMessage) onError,
-    required void Function(PhoneAuthCredential credential) onVerificationCompleted,
-  }) async {
-    await remoteDataSource.sendPhoneOtp(
-      phoneNumber: phoneNumber,
-      onCodeSent: onCodeSent,
-      onError: onError,
-      onVerificationCompleted: onVerificationCompleted,
-    );
-  }
-
-  @override
-  Future<UserCredential> verifyOtpCode({
-    required String verificationId,
-    required String smsCode,
-  }) async {
-    return await remoteDataSource.verifyOtpCode(
-      verificationId: verificationId,
-      smsCode: smsCode,
-    );
-  }
-
-  @override
   Future<ProviderProfileEntity?> getProfile(String providerId) async {
     return await remoteDataSource.getProviderProfile(providerId);
   }

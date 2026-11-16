@@ -22,6 +22,8 @@ class DiscoveryLoaded extends DiscoveryState {
   final double? customerLatitude;
   final double? customerLongitude;
   final String customerAreaName;
+  final String customerVillage;
+  final String customerBlock;
   final dynamic activeAiIntent;
   final bool isAiProcessing;
   final bool hasMoreProviders;
@@ -38,6 +40,8 @@ class DiscoveryLoaded extends DiscoveryState {
     this.customerLatitude,
     this.customerLongitude,
     this.customerAreaName = 'स्थान चुनें (GPS)',
+    this.customerVillage = '',
+    this.customerBlock = '',
     this.activeAiIntent,
     this.isAiProcessing = false,
     this.hasMoreProviders = true,
@@ -55,6 +59,8 @@ class DiscoveryLoaded extends DiscoveryState {
     double? customerLatitude,
     double? customerLongitude,
     String? customerAreaName,
+    String? customerVillage,
+    String? customerBlock,
     dynamic activeAiIntent,
     bool? isAiProcessing,
     bool? hasMoreProviders,
@@ -73,6 +79,8 @@ class DiscoveryLoaded extends DiscoveryState {
       customerLatitude: customerLatitude ?? this.customerLatitude,
       customerLongitude: customerLongitude ?? this.customerLongitude,
       customerAreaName: customerAreaName ?? this.customerAreaName,
+      customerVillage: customerVillage ?? this.customerVillage,
+      customerBlock: customerBlock ?? this.customerBlock,
       activeAiIntent: clearActiveAiIntent ? null : (activeAiIntent ?? this.activeAiIntent),
       isAiProcessing: isAiProcessing ?? this.isAiProcessing,
       hasMoreProviders: hasMoreProviders ?? this.hasMoreProviders,
@@ -92,6 +100,8 @@ class DiscoveryLoaded extends DiscoveryState {
         customerLatitude,
         customerLongitude,
         customerAreaName,
+        customerVillage,
+        customerBlock,
         activeAiIntent,
         isAiProcessing,
         hasMoreProviders,

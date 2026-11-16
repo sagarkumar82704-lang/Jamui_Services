@@ -1,6 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../data/datasources/professional_provider_remote_data_source.dart';
+import '../../services/professional_receipt_service.dart';
+import '../../../../core/localization/provider_strings.dart';
+import '../../../../core/localization/language_selection_modal.dart';
+import '../widgets/professional_provider_order_receipt_sheet.dart';
 
 /// Professional Seller Orders Management Page
 /// Strictly adheres to backend state machine transitions in updateDiamondOrderStatus.
@@ -24,12 +29,75 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
   late final ProfessionalProviderRemoteDataSource _dataSource;
   String _activeTab = 'All'; // 'All', 'New', 'Preparing', 'Out', 'Completed', 'Rejected'
   late final Stream<List<Map<String, dynamic>>> _ordersStream;
+  final Set<String> _pendingProductResolutions = {};
 
   @override
   void initState() {
     super.initState();
     _dataSource = widget.dataSource ?? ProfessionalProviderRemoteDataSource();
     _ordersStream = _dataSource.streamShopOrders(widget.shopId);
+  }
+
+  void _resolveCatalogTitlesIfNeeded(List<Map<String, dynamic>> orders) {
+    bool hasNewToResolve = false;
+    for (final order in orders) {
+      final orderShopId = ((order['shopId'] as String?) ?? widget.shopId).trim();
+      // Strict security invariant: isolate queries to the current authenticated shop
+      if (orderShopId != widget.shopId) continue;
+      final items = (order['items'] as List<dynamic>?) ?? [];
+      for (final it in items) {
+        if (it is Map) {
+          final rawName = (it['name'] ?? it['title']) as String?;
+          final productId = (it['productId'] as String?)?.trim() ?? '';
+          if (ProfessionalProviderRemoteDataSource.isGenericFallbackItemName(rawName) && productId.isNotEmpty) {
+            final key = '${widget.shopId}_$productId';
+            if (!_pendingProductResolutions.contains(key) &&
+                _dataSource.getCachedCatalogProductTitle(shopId: widget.shopId, productId: productId) == null) {
+              _pendingProductResolutions.add(key);
+              hasNewToResolve = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (hasNewToResolve) {
+      _dataSource.resolveOrdersCatalogTitles(orders, widget.shopId).then((_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  ({String displayName, bool isRecovered, bool isNotFound}) _resolveItemDisplayTitle(Map<String, dynamic> item) {
+    final rawName = ((item['name'] ?? item['title']) as String?)?.trim() ?? '';
+    final productId = (item['productId'] as String?)?.trim() ?? '';
+
+    if (ProfessionalProviderRemoteDataSource.isGenericFallbackItemName(rawName)) {
+      if (productId.isNotEmpty) {
+        final cachedTitle = _dataSource.getCachedCatalogProductTitle(
+          shopId: widget.shopId,
+          productId: productId,
+        );
+        if (cachedTitle != null && cachedTitle.isNotEmpty) {
+          return (
+            displayName: cachedTitle,
+            isRecovered: true,
+            isNotFound: false,
+          );
+        }
+      }
+      return (
+        displayName: 'उत्पाद का नाम उपलब्ध नहीं',
+        isRecovered: true,
+        isNotFound: true,
+      );
+    }
+
+    return (
+      displayName: rawName.isNotEmpty ? rawName : 'उत्पाद',
+      isRecovered: false,
+      isNotFound: false,
+    );
   }
 
   Future<void> _showRejectionDialog(String orderId) async {
@@ -131,12 +199,14 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
   }
 
   void _showOrderDetailsSheet(Map<String, dynamic> o) {
-    final orderId = o['orderId'] ?? o['id'] ?? 'ORD';
+    final docId = o['id'] ?? o['orderId'] ?? '';
+    final platformOrderNum = o['orderNumber'] ?? o['orderId'] ?? docId;
+    final sellerOrderNum = (o['sellerOrderNumber'] as String?)?.trim();
     final custName = o['customerName'] ?? 'ग्राहक';
     final custPhone = o['customerPhone'] ?? '';
-    final subtotal = (o['subtotal'] as num?)?.toInt() ?? 0;
-    final deliveryFee = (o['deliveryFee'] as num?)?.toInt() ?? 0;
-    final total = (o['totalAmount'] as num?)?.toInt() ?? (subtotal + deliveryFee);
+    final subtotal = (o['subtotal'] as num?)?.toDouble() ?? 0.0;
+    final deliveryFee = (o['deliveryFee'] as num?)?.toDouble() ?? (o['deliveryCharge'] as num?)?.toDouble() ?? 0.0;
+    final total = (o['totalAmount'] as num?)?.toDouble() ?? (subtotal + deliveryFee);
     final st = (o['status'] as String?)?.toLowerCase().trim() ?? 'placed';
     final deliveryMethod = (o['deliveryMethod'] as String?) ?? (o['fulfillmentType'] as String?) ?? 'delivery';
     final isDelivery = deliveryMethod == 'delivery';
@@ -169,8 +239,30 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('ऑर्डर विवरण #$orderId', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
-                        const SizedBox(height: 2),
+                        if (sellerOrderNum != null && sellerOrderNum.isNotEmpty) ...[
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0F766E).withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFF0F766E).withValues(alpha: 0.3)),
+                                ),
+                                child: Text(
+                                  '${ProviderStrings.sellerOrderNo}: $sellerOrderNum',
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFF0F766E)),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text('${ProviderStrings.platformOrderNo}: #$platformOrderNum', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF64748B))),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                        ] else ...[
+                          Text('${ProviderStrings.orderDetails} #$platformOrderNum', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                          const SizedBox(height: 2),
+                        ],
                         Text(_formatOrderTime(o['createdAt']), style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
                       ],
                     ),
@@ -199,7 +291,7 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            isDelivery ? 'होम डिलीवरी (Home Delivery)' : 'दुकान से पिकअप (Store Pickup)',
+                            isDelivery ? ProviderStrings.homeDelivery : ProviderStrings.storePickup,
                             style: TextStyle(
                               fontSize: 13.5,
                               fontWeight: FontWeight.bold,
@@ -262,27 +354,121 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
                     separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey.shade100),
                     itemBuilder: (context, idx) {
                       final it = items[idx] as Map<String, dynamic>;
-                      final name = it['name'] ?? it['title'] ?? 'उत्पाद';
-                      final qty = it['quantity'] ?? 1;
-                      final unit = it['unit'] ?? '';
-                      final price = (it['price'] as num?)?.toInt() ?? 0;
-                      final itemTotal = (it['itemTotal'] as num?)?.toInt() ?? (price * (qty as int));
+                      final res = _resolveItemDisplayTitle(it);
+                      final name = res.displayName;
+                      final variantTitle = (it['variantTitle'] as String?)?.trim();
+                      final hasVariant = variantTitle != null && variantTitle.isNotEmpty;
+
+                      // Safe quantity parsing
+                      final rawQty = it['quantity'];
+                      final int qty = (rawQty is num)
+                          ? rawQty.toInt()
+                          : (int.tryParse(rawQty?.toString() ?? '') ?? 1);
+                      final safeQty = qty > 0 ? qty : 1;
+
+                      final unit = ((it['unit'] as String?) ?? '').trim();
+                      final price = (it['price'] as num?)?.toDouble() ??
+                          (it['pricePerUnit'] as num?)?.toDouble() ??
+                          (it['sellingPrice'] as num?)?.toDouble() ??
+                          0.0;
+                      final itemTotal = (it['itemTotal'] as num?)?.toDouble() ??
+                          (it['total'] as num?)?.toDouble() ??
+                          (price * safeQty);
+
+                      // Avoid duplicate unit display like "500g (g)"
+                      String unitSuffix = '';
+                      if (hasVariant) {
+                        if (unit.isNotEmpty && !variantTitle.toLowerCase().contains(unit.toLowerCase())) {
+                          unitSuffix = ' • $unit';
+                        }
+                      } else if (unit.isNotEmpty) {
+                        unitSuffix = ' ($unit)';
+                      }
 
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                         child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1E293B))),
-                                  Text('₹$price x $qty ${unit.isNotEmpty ? "($unit)" : ""}', style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          name,
+                                          style: TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.bold,
+                                            color: res.isNotFound ? const Color(0xFFC62828) : const Color(0xFF1E293B),
+                                            fontStyle: res.isNotFound ? FontStyle.italic : FontStyle.normal,
+                                          ),
+                                        ),
+                                      ),
+                                      if (res.isRecovered && !res.isNotFound) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFE0F2F1),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: const Color(0xFF0F766E), width: 0.6),
+                                          ),
+                                          child: const Text(
+                                            'कैटलॉग से प्राप्त',
+                                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF0F766E)),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  if (res.isRecovered)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        res.isNotFound
+                                            ? 'मूल ऑर्डर में नाम दर्ज नहीं था और यह उत्पाद अब कैटलॉग में नहीं है।'
+                                            : 'मूल ऑर्डर रिकॉर्ड में नाम अनुपलब्ध था - दुकान कैटलॉग से प्रदर्शित किया गया है।',
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          color: res.isNotFound ? const Color(0xFFC62828) : const Color(0xFF0F766E),
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    ),
+                                  if (hasVariant)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFF1F5F9),
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: const Color(0xFFCBD5E1), width: 0.6),
+                                        ),
+                                        child: Text(
+                                          'वेरिएंट (Variant): $variantTitle$unitSuffix',
+                                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+                                        ),
+                                      ),
+                                    ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    '${ProfessionalReceiptService.formatCurrency(price)} x $safeQty${!hasVariant ? unitSuffix : ""}',
+                                    style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                                  ),
                                 ],
                               ),
                             ),
-                            Text('₹$itemTotal', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                            const SizedBox(width: 8),
+                            Text(
+                              ProfessionalReceiptService.formatCurrency(itemTotal),
+                              style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                            ),
                           ],
                         ),
                       );
@@ -304,24 +490,24 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('वस्तुओं का मूल्य (Subtotal)', style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B))),
-                          Text('₹$subtotal', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                          Text(ProviderStrings.subtotal, style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B))),
+                          Text(ProfessionalReceiptService.formatCurrency(subtotal), style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
                         ],
                       ),
                       const SizedBox(height: 6),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('डिलीवरी शुल्क (Delivery Fee)', style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B))),
-                          Text(deliveryFee > 0 ? '₹$deliveryFee' : 'मुफ़्त (₹0)', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                          Text(ProviderStrings.deliveryFee, style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B))),
+                          Text(deliveryFee > 0 ? ProfessionalReceiptService.formatCurrency(deliveryFee) : ProviderStrings.freeWithZero, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
                         ],
                       ),
                       const Divider(height: 16),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('कुल देय राशि (Total Amount)', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
-                          Text('₹$total', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0F766E))),
+                          Text(ProviderStrings.total, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                          Text(ProfessionalReceiptService.formatCurrency(total), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0F766E))),
                         ],
                       ),
                     ],
@@ -338,21 +524,62 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
                       border: Border.all(color: const Color(0xFFEF9A9A)),
                     ),
                     child: Text(
-                      'अस्वीकृति का कारण: "$rejectionReason"',
+                      '${ProviderStrings.rejectedOrders}: "$rejectionReason"',
                       style: const TextStyle(fontSize: 12, color: Color(0xFFC62828), fontWeight: FontWeight.bold),
                     ),
                   ),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
+
+                // Digital Packing Slip Button
+                OutlinedButton.icon(
+                  onPressed: () => _showPackingSlip(o),
+                  icon: const Icon(Icons.receipt_long_rounded, size: 18),
+                  label: Text(ProviderStrings.packingSlip),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF0F766E),
+                    side: const BorderSide(color: Color(0xFF0F766E)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                const SizedBox(height: 14),
 
                 // Action Area inside modal sheet
-                _buildActionForStatus(o['id'] ?? orderId, st, isDelivery, onFinished: () => Navigator.pop(ctx)),
+                _buildActionForStatus(docId, st, isDelivery, onFinished: () => Navigator.pop(ctx)),
                 const SizedBox(height: 20),
               ],
             );
           },
         );
       },
+    );
+  }
+
+  void _showPackingSlip(Map<String, dynamic> o) {
+    final catalogTitles = <String, String?>{};
+    final items = (o['items'] as List<dynamic>?) ?? [];
+    for (final it in items) {
+      if (it is Map) {
+        final pId = (it['productId'] as String?)?.trim() ?? '';
+        if (pId.isNotEmpty) {
+          catalogTitles[pId] = _dataSource.getCachedCatalogProductTitle(
+            shopId: widget.shopId,
+            productId: pId,
+          );
+        }
+      }
+    }
+
+    final safeOrderMap = <String, dynamic>{
+      'shopId': widget.shopId,
+      ...o,
+    };
+    ProfessionalProviderOrderReceiptSheet.showFromMap(
+      context,
+      orderMap: safeOrderMap,
+      authenticatedShopId: widget.shopId,
+      catalogTitles: catalogTitles,
     );
   }
 
@@ -379,15 +606,28 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
-        title: const Text(
-          'ऑर्डर प्रबंधन (Orders)',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+        title: Text(
+          ProviderStrings.ordersManagement,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
         ),
+        actions: [
+          IconButton(
+            tooltip: ProviderStrings.selectLanguage,
+            icon: const Icon(Icons.language_rounded, color: Color(0xFF0F766E)),
+            onPressed: () => LanguageSelectionModal.show(context),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: _ordersStream,
         builder: (context, snapshot) {
           final allOrders = snapshot.data ?? [];
+          if (allOrders.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _resolveCatalogTitlesIfNeeded(allOrders);
+            });
+          }
           final filtered = allOrders.where((o) {
             final st = (o['status'] as String?)?.toLowerCase().trim() ?? 'placed';
             if (_activeTab == 'New' && st != 'placed') return false;
@@ -402,24 +642,27 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
             children: [
               // Order Filter Tabs
               Container(
+                width: double.infinity,
                 color: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildTabChip('सभी (${allOrders.length})', 'All'),
-                      const SizedBox(width: 8),
-                      _buildTabChip('नए (New)', 'New'),
-                      const SizedBox(width: 8),
-                      _buildTabChip('प्रक्रियाधीन (Preparing)', 'Preparing'),
-                      const SizedBox(width: 8),
-                      _buildTabChip('डिस्पैच / तैयार', 'Out'),
-                      const SizedBox(width: 8),
-                      _buildTabChip('पूर्ण (Completed)', 'Completed'),
-                      const SizedBox(width: 8),
-                      _buildTabChip('अस्वीकृत (Rejected)', 'Rejected'),
-                    ],
+                child: ResponsiveContentContainer(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildTabChip('${ProviderStrings.allOrders} (${allOrders.length})', 'All'),
+                        const SizedBox(width: 8),
+                        _buildTabChip(ProviderStrings.newOrders, 'New'),
+                        const SizedBox(width: 8),
+                        _buildTabChip(ProviderStrings.preparingOrders, 'Preparing'),
+                        const SizedBox(width: 8),
+                        _buildTabChip(ProviderStrings.outOrders, 'Out'),
+                        const SizedBox(width: 8),
+                        _buildTabChip(ProviderStrings.completedOrders, 'Completed'),
+                        const SizedBox(width: 8),
+                        _buildTabChip(ProviderStrings.rejectedOrders, 'Rejected'),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -428,11 +671,17 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
               Expanded(
                 child: filtered.isEmpty
                     ? _buildEmptyOrders()
-                    : ListView.separated(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: filtered.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
-                        itemBuilder: (ctx, i) => _buildOrderCard(filtered[i]),
+                    : SingleChildScrollView(
+                        padding: EdgeInsets.zero,
+                        child: ResponsiveContentContainer(
+                          padding: ResponsiveLayout.pagePadding(context),
+                          child: ResponsiveCardGrid(
+                            tabletColumns: 2,
+                            desktopColumns: 2,
+                            largeDesktopColumns: 2,
+                            children: filtered.map(_buildOrderCard).toList(),
+                          ),
+                        ),
                       ),
               ),
             ],
@@ -465,12 +714,14 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
   }
 
   Widget _buildOrderCard(Map<String, dynamic> o) {
-    final orderId = o['orderId'] ?? o['id'] ?? 'ORD';
+    final docId = o['id'] ?? o['orderId'] ?? '';
+    final platformOrderNum = o['orderNumber'] ?? o['orderId'] ?? docId;
+    final sellerOrderNum = (o['sellerOrderNumber'] as String?)?.trim();
     final custName = o['customerName'] ?? 'ग्राहक';
     final custPhone = o['customerPhone'] ?? '';
-    final subtotal = (o['subtotal'] as num?)?.toInt() ?? 0;
-    final deliveryFee = (o['deliveryFee'] as num?)?.toInt() ?? 0;
-    final total = (o['totalAmount'] as num?)?.toInt() ?? (subtotal + deliveryFee);
+    final subtotal = (o['subtotal'] as num?)?.toDouble() ?? 0.0;
+    final deliveryFee = (o['deliveryFee'] as num?)?.toDouble() ?? (o['deliveryCharge'] as num?)?.toDouble() ?? 0.0;
+    final total = (o['totalAmount'] as num?)?.toDouble() ?? (subtotal + deliveryFee);
     final st = (o['status'] as String?)?.toLowerCase().trim() ?? 'placed';
     final deliveryMethod = (o['deliveryMethod'] as String?) ?? (o['fulfillmentType'] as String?) ?? 'delivery';
     final isDelivery = deliveryMethod == 'delivery';
@@ -495,7 +746,44 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('#$orderId', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                Expanded(
+                  child: Row(
+                    children: [
+                      if (sellerOrderNum != null && sellerOrderNum.isNotEmpty) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F766E).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFF0F766E).withValues(alpha: 0.3)),
+                          ),
+                          child: Text(
+                            sellerOrderNum,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF0F766E),
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Flexible(
+                        child: Text(
+                          '#$platformOrderNum',
+                          style: TextStyle(
+                            fontSize: sellerOrderNum != null ? 13 : 15,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF64748B),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
                 _buildStatusBadge(st),
               ],
             ),
@@ -504,12 +792,15 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
               children: [
                 const Icon(Icons.person_rounded, size: 15, color: Colors.grey),
                 const SizedBox(width: 4),
-                Text(custName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF334155))),
-                if (custPhone.isNotEmpty) ...[
-                  const Text(' • ', style: TextStyle(color: Colors.grey)),
-                  Text(custPhone, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-                ],
-                const Spacer(),
+                Expanded(
+                  child: Text(
+                    custPhone.isNotEmpty ? '$custName • $custPhone' : custName,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF334155)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
@@ -532,21 +823,61 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
             // Items summary
             ...items.take(3).map((it) {
               final map = it as Map<String, dynamic>;
-              final name = map['name'] ?? map['title'] ?? 'उत्पाद';
-              final quantity = map['quantity'] ?? 1;
-              final unit = map['unit'] ?? '';
-              final itemTotal = (map['itemTotal'] as num?)?.toInt() ?? (map['total'] as num?)?.toInt() ?? 0;
+              final res = _resolveItemDisplayTitle(map);
+              final name = res.displayName;
+              final variantTitle = (map['variantTitle'] as String?)?.trim();
+              final hasVariant = variantTitle != null && variantTitle.isNotEmpty;
+              final rawQty = map['quantity'];
+              final int quantity = (rawQty is num)
+                  ? rawQty.toInt()
+                  : (int.tryParse(rawQty?.toString() ?? '') ?? 1);
+              final safeQty = quantity > 0 ? quantity : 1;
+              final unit = ((map['unit'] as String?) ?? '').trim();
+              final price = (map['price'] as num?)?.toDouble() ??
+                  (map['pricePerUnit'] as num?)?.toDouble() ??
+                  (map['sellingPrice'] as num?)?.toDouble() ??
+                  0.0;
+              final itemTotal = (map['itemTotal'] as num?)?.toDouble() ??
+                  (map['total'] as num?)?.toDouble() ??
+                  (price * safeQty);
+
+              // Construct display label avoiding duplicate units like "500g (g)"
+              String label = name;
+              if (res.isRecovered && !res.isNotFound) {
+                label = '$name [कैटलॉग]';
+              }
+              if (hasVariant) {
+                if (unit.isNotEmpty && !variantTitle.toLowerCase().contains(unit.toLowerCase())) {
+                  label = '$label ($variantTitle, $unit)';
+                } else {
+                  label = '$label ($variantTitle)';
+                }
+              } else if (unit.isNotEmpty) {
+                label = '$label ($unit)';
+              }
 
               return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
+                padding: const EdgeInsets.symmetric(vertical: 2.5),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      '$name  x$quantity ${unit.isNotEmpty ? "($unit)" : ""}',
-                      style: const TextStyle(fontSize: 12.5, color: Color(0xFF475569)),
+                    Expanded(
+                      child: Text(
+                        '$label  x$safeQty',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: res.isNotFound ? const Color(0xFFC62828) : const Color(0xFF475569),
+                          fontStyle: res.isNotFound ? FontStyle.italic : FontStyle.normal,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                    Text('₹$itemTotal', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    Text(
+                      ProfessionalReceiptService.formatCurrency(itemTotal),
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                    ),
                   ],
                 ),
               );
@@ -559,18 +890,27 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
             const Divider(height: 18),
 
             // Bill Total & Delivery Breakdown
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('कुल राशि: ₹$total', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Color(0xFF0F766E))),
+                    Text(
+                      'कुल राशि: ${ProfessionalReceiptService.formatCurrency(total)}',
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Color(0xFF0F766E)),
+                    ),
                     if (deliveryFee > 0)
-                      Text('(वस्तु: ₹$subtotal + डिलीवरी: ₹$deliveryFee)', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
+                      Text(
+                        '(वस्तु: ${ProfessionalReceiptService.formatCurrency(subtotal)} + डिलीवरी: ${ProfessionalReceiptService.formatCurrency(deliveryFee)})',
+                        style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B)),
+                      ),
                   ],
                 ),
-                _buildActionForStatus(o['id'] ?? orderId, st, isDelivery),
+                _buildActionForStatus(docId, st, isDelivery),
               ],
             ),
 
@@ -598,36 +938,29 @@ class _ProfessionalShopOrdersPageState extends State<ProfessionalShopOrdersPage>
   Widget _buildStatusBadge(String st) {
     Color bg = const Color(0xFFE0F2F1);
     Color fg = const Color(0xFF0F766E);
-    String label = st.toUpperCase();
+    final label = ProviderStrings.orderStatusLabel(st);
 
     if (st == 'placed') {
       bg = const Color(0xFFEFF6FF);
       fg = const Color(0xFF1D4ED8);
-      label = 'नया (PLACED)';
     } else if (st == 'accepted') {
       bg = const Color(0xFFE0F2F1);
       fg = const Color(0xFF0F766E);
-      label = 'स्वीकृत (ACCEPTED)';
     } else if (st == 'preparing') {
       bg = const Color(0xFFFFF3E0);
       fg = const Color(0xFFE65100);
-      label = 'तैयारी जारी (PREPARING)';
     } else if (st == 'out_for_delivery') {
       bg = const Color(0xFFE3F2FD);
       fg = const Color(0xFF1565C0);
-      label = 'डिलीवरी हेतु रवाना (OUT)';
     } else if (st == 'ready_for_pickup') {
       bg = const Color(0xFFF3E8FF);
       fg = const Color(0xFF7E22CE);
-      label = 'पिकअप हेतु तैयार (READY)';
     } else if (st == 'delivered' || st == 'collected') {
       bg = const Color(0xFFE8F5E9);
       fg = const Color(0xFF2E7D32);
-      label = 'वितरित (DELIVERED)';
     } else if (st == 'rejected' || st == 'cancelled') {
       bg = const Color(0xFFFFEBEE);
       fg = const Color(0xFFC62828);
-      label = 'रद्द / अस्वीकृत';
     }
 
     return Container(

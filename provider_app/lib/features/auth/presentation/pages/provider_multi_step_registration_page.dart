@@ -9,6 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/auth_exception_handler.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../../core/widgets/app_network_or_base64_image.dart';
 import '../../../categories/data/models/service_category_model.dart';
 import '../../../professional_shop/presentation/pages/professional_shop_registration_page.dart';
@@ -1121,11 +1122,8 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
         throw 'यह मोबाइल नंबर ($cleanPhone) पहले से किसी अन्य प्रदाता खाते से जुड़ा हुआ है। कृपया सीधे लॉगिन करें।';
       }
 
-      // If user not signed in, check if phone was verified
+      // If user not signed in, register with Email & Password
       if (user == null) {
-        if (!_isPhoneVerified) {
-          throw 'रजिस्ट्रेशन के लिए मोबाइल नंबर का OTP सत्यापन अनिवार्य है। कृपया स्टेप 1 पर जाकर OTP सत्यापित करें।';
-        }
         if (cleanEmail.isEmpty || cleanPassword.isEmpty) {
           throw 'रजिस्ट्रेशन पूरा करने के लिए वैध ईमेल और कम से कम 6 अक्षरों का पासवर्ड आवश्यक है।';
         }
@@ -1420,8 +1418,10 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
             // Step Content
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20.0),
-                child: _buildCurrentStepContent(),
+                child: ResponsiveFormShell(
+                  maxWidth: 740,
+                  child: _buildCurrentStepContent(),
+                ),
               ),
             ),
 
@@ -1453,48 +1453,53 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
   }
 
   Widget _buildStepIndicatorHeader() {
+    final isSmall = ResponsiveLayout.isSmallMobile(context);
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: List.generate(_totalSteps, (index) {
-          final isPassed = index < _currentStep;
-          final isCurrent = index == _currentStep;
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(horizontal: isSmall ? 10 : 16, vertical: 12),
+      child: ResponsiveContentContainer(
+        maxWidth: 680,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: List.generate(_totalSteps, (index) {
+            final isPassed = index < _currentStep;
+            final isCurrent = index == _currentStep;
 
-          return InkWell(
-            onTap: isPassed ? () => setState(() => _currentStep = index) : null,
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 12,
-                  backgroundColor: isPassed
-                      ? AppColors.success
-                      : isCurrent
-                          ? AppColors.primary
-                          : Colors.grey.shade300,
-                  child: isPassed
-                      ? const Icon(Icons.check, size: 14, color: Colors.white)
-                      : Text(
-                          '${index + 1}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: isCurrent ? Colors.white : Colors.grey.shade700,
+            return InkWell(
+              onTap: isPassed ? () => setState(() => _currentStep = index) : null,
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: isSmall ? 10 : 12,
+                    backgroundColor: isPassed
+                        ? AppColors.success
+                        : isCurrent
+                            ? AppColors.primary
+                            : Colors.grey.shade300,
+                    child: isPassed
+                        ? Icon(Icons.check, size: isSmall ? 12 : 14, color: Colors.white)
+                        : Text(
+                            '${index + 1}',
+                            style: TextStyle(
+                              fontSize: isSmall ? 10 : 11,
+                              fontWeight: FontWeight.bold,
+                              color: isCurrent ? Colors.white : Colors.grey.shade700,
+                            ),
                           ),
-                        ),
-                ),
-                if (index < _totalSteps - 1)
-                  Container(
-                    width: 20,
-                    height: 2,
-                    color: index < _currentStep ? AppColors.success : Colors.grey.shade300,
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
                   ),
-              ],
-            ),
-          );
-        }),
+                  if (index < _totalSteps - 1)
+                    Container(
+                      width: isSmall ? 12 : 20,
+                      height: 2,
+                      color: index < _currentStep ? AppColors.success : Colors.grey.shade300,
+                      margin: EdgeInsets.symmetric(horizontal: isSmall ? 2 : 4),
+                    ),
+                ],
+              ),
+            );
+          }),
+        ),
       ),
     );
   }
@@ -1568,9 +1573,11 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
           children: [
             const Icon(Icons.storefront_outlined, color: Color(0xFF0D6E57), size: 20),
             const SizedBox(width: 8),
-            const Text(
-              '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
-              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            const Expanded(
+              child: Text(
+                '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
             ),
           ],
         ),
@@ -1737,9 +1744,11 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
           children: [
             const Icon(Icons.storefront_outlined, color: Color(0xFF0D6E57), size: 20),
             const SizedBox(width: 8),
-            const Text(
-              '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
-              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            const Expanded(
+              child: Text(
+                '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
             ),
           ],
         ),
@@ -1910,9 +1919,11 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
           children: [
             const Icon(Icons.storefront_outlined, color: Color(0xFF0D6E57), size: 20),
             const SizedBox(width: 8),
-            const Text(
-              '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
-              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            const Expanded(
+              child: Text(
+                '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
             ),
           ],
         ),
@@ -2078,9 +2089,11 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
           children: [
             const Icon(Icons.storefront_outlined, color: Color(0xFF0D6E57), size: 20),
             const SizedBox(width: 8),
-            const Text(
-              '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
-              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            const Expanded(
+              child: Text(
+                '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
             ),
           ],
         ),
@@ -3074,9 +3087,11 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
           children: [
             const Icon(Icons.storefront_outlined, color: Color(0xFF0D6E57), size: 20),
             const SizedBox(width: 8),
-            const Text(
-              '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
-              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            const Expanded(
+              child: Text(
+                '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
             ),
           ],
         ),
@@ -3337,9 +3352,11 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
           children: [
             const Icon(Icons.storefront_outlined, color: Color(0xFF0D6E57), size: 20),
             const SizedBox(width: 8),
-            const Text(
-              '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
-              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            const Expanded(
+              child: Text(
+                '🏬 प्रोफेशनल श्रेणियाँ (Professional Pro Categories)',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
             ),
           ],
         ),
@@ -4227,49 +4244,52 @@ class _ProviderMultiStepRegistrationPageState extends State<ProviderMultiStepReg
           BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, -4)),
         ],
       ),
-      child: Row(
-        children: [
-          if (_currentStep > 0)
+      child: ResponsiveContentContainer(
+        maxWidth: 740,
+        child: Row(
+          children: [
+            if (_currentStep > 0)
+              Expanded(
+                flex: 1,
+                child: OutlinedButton(
+                  onPressed: _goToPreviousStep,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    side: const BorderSide(color: AppColors.primary),
+                  ),
+                  child: const Text('पीछे', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            if (_currentStep > 0) const SizedBox(width: 12),
             Expanded(
-              flex: 1,
-              child: OutlinedButton(
-                onPressed: _goToPreviousStep,
-                style: OutlinedButton.styleFrom(
+              flex: 2,
+              child: ElevatedButton(
+                onPressed: isPendingCategory
+                    ? null
+                    : (isLastStep
+                        ? (_isSubmittingFinal ? null : _submitFullRegistration)
+                        : (_isSavingDraft ? null : _goToNextStep)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isPendingCategory
+                      ? Colors.grey.shade400
+                      : (isLastStep ? AppColors.accent : AppColors.primary),
+                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  side: const BorderSide(color: AppColors.primary),
                 ),
-                child: const Text('पीछे', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+                child: (_isSubmittingFinal || _isSavingDraft)
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : Text(
+                        isPendingCategory
+                            ? 'निरीक्षण जारी है (Under Review)'
+                            : (isLastStep ? 'आवेदन सबमिट करें (Submit)' : 'आगे बढ़ें (Next)'),
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
               ),
             ),
-          if (_currentStep > 0) const SizedBox(width: 12),
-          Expanded(
-            flex: 2,
-            child: ElevatedButton(
-              onPressed: isPendingCategory
-                  ? null
-                  : (isLastStep
-                      ? (_isSubmittingFinal ? null : _submitFullRegistration)
-                      : (_isSavingDraft ? null : _goToNextStep)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isPendingCategory
-                    ? Colors.grey.shade400
-                    : (isLastStep ? AppColors.accent : AppColors.primary),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: (_isSubmittingFinal || _isSavingDraft)
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : Text(
-                      isPendingCategory
-                          ? 'निरीक्षण जारी है (Under Review)'
-                          : (isLastStep ? 'आवेदन सबमिट करें (Submit)' : 'आगे बढ़ें (Next)'),
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                    ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

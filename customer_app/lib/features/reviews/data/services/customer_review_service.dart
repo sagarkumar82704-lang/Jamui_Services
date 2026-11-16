@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/services/r2_upload_service.dart';
@@ -9,17 +8,14 @@ import '../../domain/entities/customer_review_entity.dart';
 
 class CustomerReviewService {
   final FirebaseFirestore _firestore;
-  final FirebaseStorage _storage;
   final ImagePicker _picker;
   final R2UploadService _r2Service;
 
   CustomerReviewService({
     FirebaseFirestore? firestore,
-    FirebaseStorage? storage,
     ImagePicker? picker,
     R2UploadService? r2Service,
   })  : _firestore = firestore ?? FirebaseFirestore.instance,
-        _storage = storage ?? FirebaseStorage.instance,
         _picker = picker ?? ImagePicker(),
         _r2Service = r2Service ?? R2UploadService();
 
@@ -74,15 +70,13 @@ class CustomerReviewService {
     }
   }
 
-  /// Upload review photo directly to Cloudflare R2 with resilient Firebase Storage fallback.
-  /// On successful R2 upload, returns the canonical relative object key (e.g. `reviews/...`).
-  /// On failure, gracefully falls back to legacy Firebase Storage download URL.
+  /// Upload review photo directly and exclusively to Cloudflare R2.
+  /// On successful R2 upload, returns the canonical relative object key (e.g. `reviews/{uid}/{bookingId}/...`).
   Future<String> uploadReviewPhoto({
     required String customerId,
     required String bookingId,
     required File file,
   }) async {
-    // 1. Attempt R2 primary upload
     try {
       final r2Result = await _r2Service.uploadFile(
         file,
@@ -90,32 +84,16 @@ class CustomerReviewService {
         targetId: bookingId,
       );
       return r2Result.objectKey;
-    } catch (r2Error) {
-      debugPrint('⚠️ [CustomerReviewService] R2 upload failed, falling back to Firebase Storage: $r2Error');
-    }
-
-    // 2. Resilient fallback to Firebase Storage
-    try {
-      final fileName = 'rev_${DateTime.now().millisecondsSinceEpoch}_${file.path.split(Platform.pathSeparator).last}';
-      final ref = _storage.ref().child('review_photos').child(customerId).child(bookingId).child(fileName);
-
-      final metadata = SettableMetadata(
-        contentType: 'image/jpeg',
-        customMetadata: {
-          'uploadedBy': customerId,
-          'bookingId': bookingId,
-          'uploadedAt': DateTime.now().toIso8601String(),
-        },
-      );
-
-      final uploadTask = await ref.putFile(file, metadata);
-      return await uploadTask.ref.getDownloadURL();
+    } on R2UploadException catch (e) {
+      debugPrint('❌ [CustomerReviewService] R2 review upload failed: $e');
+      throw Exception('रिव्यू फोटो अपलोड विफल रहा: ${e.message}');
     } catch (e) {
-      throw Exception('फ़ोटो अपलोड करने में त्रुटि: $e');
+      debugPrint('❌ [CustomerReviewService] Unexpected review upload error: $e');
+      throw Exception('रिव्यू फोटो अपलोड करने में त्रुटि: $e');
     }
   }
 
-  /// Upload review photo bytes directly to Cloudflare R2 with resilient Firebase Storage fallback.
+  /// Upload review photo bytes directly and exclusively to Cloudflare R2.
   Future<String> uploadReviewPhotoBytes({
     required String customerId,
     required String bookingId,
@@ -123,7 +101,6 @@ class CustomerReviewService {
     String fileName = 'review.jpg',
     String mimeType = 'image/jpeg',
   }) async {
-    // 1. Attempt R2 primary upload
     try {
       final r2Result = await _r2Service.uploadBytes(
         bytes: bytes,
@@ -133,42 +110,18 @@ class CustomerReviewService {
         targetId: bookingId,
       );
       return r2Result.objectKey;
-    } catch (r2Error) {
-      debugPrint('⚠️ [CustomerReviewService] R2 bytes upload failed, falling back to Firebase Storage: $r2Error');
-    }
-
-    // 2. Resilient fallback to Firebase Storage
-    try {
-      final name = 'rev_${DateTime.now().millisecondsSinceEpoch}_$fileName';
-      final ref = _storage.ref().child('review_photos').child(customerId).child(bookingId).child(name);
-
-      final metadata = SettableMetadata(
-        contentType: mimeType,
-        customMetadata: {
-          'uploadedBy': customerId,
-          'bookingId': bookingId,
-          'uploadedAt': DateTime.now().toIso8601String(),
-        },
-      );
-
-      final uploadTask = await ref.putData(bytes, metadata);
-      return await uploadTask.ref.getDownloadURL();
+    } on R2UploadException catch (e) {
+      debugPrint('❌ [CustomerReviewService] R2 review bytes upload failed: $e');
+      throw Exception('रिव्यू फोटो अपलोड विफल रहा: ${e.message}');
     } catch (e) {
-      throw Exception('फ़ोटो अपलोड करने में त्रुटि: $e');
+      debugPrint('❌ [CustomerReviewService] Unexpected review bytes upload error: $e');
+      throw Exception('रिव्यू फोटो अपलोड करने में त्रुटि: $e');
     }
   }
 
-  /// Delete unreferenced review photo from Firebase Storage
+  /// Delete unreferenced review photo (best-effort cleanup)
   Future<void> deleteReviewPhoto(String photoUrl) async {
-    try {
-      if (photoUrl.isEmpty) return;
-      if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
-        final ref = _storage.refFromURL(photoUrl);
-        await ref.delete();
-      }
-    } catch (_) {
-      // Best-effort cleanup
-    }
+    // Legacy cleanup preserved as safe no-op for interface stability.
   }
 
   /// Fetch existing review for a specific booking and customer

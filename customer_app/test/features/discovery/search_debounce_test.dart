@@ -21,6 +21,8 @@ class MockDebounceDiscoveryRepository implements CustomerDiscoveryRepository {
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
   }) async {
     if (searchQuery != null) {
       queriedSearches.add(searchQuery);
@@ -36,6 +38,8 @@ class MockDebounceDiscoveryRepository implements CustomerDiscoveryRepository {
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
     int limit = 12,
     dynamic lastDocumentCursor,
   }) async {

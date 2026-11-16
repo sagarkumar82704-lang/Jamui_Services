@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/r2_upload_service.dart';
 import '../../../../core/utils/app_image_utils.dart';
+import '../../../../core/utils/responsive_layout.dart';
 import '../../../auth/domain/entities/provider_profile_entity.dart';
 import '../../../subscription/presentation/pages/subscription_page.dart';
 import '../../data/models/provider_listing_model.dart';
@@ -195,87 +196,91 @@ class _ProviderListingsPageState extends State<ProviderListingsPage> {
                   : allListings.where((l) => l.listingType == _selectedFilter).toList();
 
               return SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Real-time Quota Summary Card
-                    ListingQuotaSummaryCard(
-                      planLimits: planLimits,
-                      storageUsage: storageUsage,
-                      activeListingsCount: activeCount,
-                      onUpgradePressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => SubscriptionPage(profile: widget.profile),
-                          ),
-                        );
-                      },
-                    ),
-
-                    // Filter Chips (All, Services, Products, Jobs)
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          _buildFilterChip('all', 'सभी (${allListings.length})'),
-                          const SizedBox(width: 8),
-                          _buildFilterChip('service', 'सर्विसेज (${allListings.where((l) => l.listingType == 'service').length})'),
-                          const SizedBox(width: 8),
-                          _buildFilterChip('product', 'उत्पाद (${allListings.where((l) => l.listingType == 'product').length})'),
-                          const SizedBox(width: 8),
-                          _buildFilterChip('job', 'जॉब्स (${allListings.where((l) => l.listingType == 'job').length})'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-
-                    // Listings List or Empty State
-                    if (filteredListings.isEmpty)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: AppColors.border),
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(Icons.inventory_2_outlined, size: 48, color: Colors.grey.shade400),
-                            const SizedBox(height: 12),
-                            const Text(
-                              'कोई लिस्टिंग नहीं मिली',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                child: ResponsiveContentContainer(
+                  padding: ResponsiveLayout.pagePadding(context),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Real-time Quota Summary Card
+                      ListingQuotaSummaryCard(
+                        planLimits: planLimits,
+                        storageUsage: storageUsage,
+                        activeListingsCount: activeCount,
+                        onUpgradePressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => SubscriptionPage(profile: widget.profile),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _selectedFilter == 'all'
-                                  ? 'ग्राहकों को अपनी सेवाएं, उत्पाद या जॉब ऑफर दिखाने के लिए नीचे "नया लिस्टिंग जोड़ें" पर टैप करें।'
-                                  : 'इस श्रेणी में वर्तमान में कोई लिस्टिंग मौजूद नहीं है।',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                            ),
-                          ],
-                        ),
-                      )
-                    else
-                      ListView.separated(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: filteredListings.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
-                        itemBuilder: (context, idx) {
-                          return _buildListingCard(
-                            listing: filteredListings[idx],
-                            planLimits: planLimits,
-                            storageUsage: storageUsage,
-                            activeCount: activeCount,
                           );
                         },
                       ),
-                  ],
+
+                      // Filter Chips (All, Services, Products, Jobs)
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            _buildFilterChip('all', 'सभी (${allListings.length})'),
+                            const SizedBox(width: 8),
+                            _buildFilterChip('service', 'सर्विसेज (${allListings.where((l) => l.listingType == 'service').length})'),
+                            const SizedBox(width: 8),
+                            _buildFilterChip('product', 'उत्पाद (${allListings.where((l) => l.listingType == 'product').length})'),
+                            const SizedBox(width: 8),
+                            _buildFilterChip('job', 'जॉब्स (${allListings.where((l) => l.listingType == 'job').length})'),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Listings List or Empty State
+                      if (filteredListings.isEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(Icons.inventory_2_outlined, size: 48, color: Colors.grey.shade400),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'कोई लिस्टिंग नहीं मिली',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _selectedFilter == 'all'
+                                    ? 'ग्राहकों को अपनी सेवाएं, उत्पाद या जॉब ऑफर दिखाने के लिए नीचे "नया लिस्टिंग जोड़ें" पर टैप करें।'
+                                    : 'इस श्रेणी में वर्तमान में कोई लिस्टिंग मौजूद नहीं है।',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        ResponsiveCardGrid(
+                          tabletColumns: 2,
+                          desktopColumns: 2,
+                          largeDesktopColumns: 3,
+                          spacing: 14,
+                          runSpacing: 12,
+                          children: filteredListings.map((listing) {
+                            return _buildListingCard(
+                              listing: listing,
+                              planLimits: planLimits,
+                              storageUsage: storageUsage,
+                              activeCount: activeCount,
+                            );
+                          }).toList(),
+                        ),
+                      const SizedBox(height: 72),
+                    ],
+                  ),
                 ),
               );
             },
@@ -451,7 +456,9 @@ class _ProviderListingsPageState extends State<ProviderListingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -464,7 +471,6 @@ class _ProviderListingsPageState extends State<ProviderListingsPage> {
                             style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: AppColors.primary),
                           ),
                         ),
-                        const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
@@ -514,11 +520,15 @@ class _ProviderListingsPageState extends State<ProviderListingsPage> {
           const Divider(height: 16),
 
           // Bottom Action Bar
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
             children: [
               // Active toggle
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Switch(
                     value: listing.isActive,
@@ -537,6 +547,7 @@ class _ProviderListingsPageState extends State<ProviderListingsPage> {
               ),
 
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   if (listing.status == 'rejected') ...[
                     IconButton(

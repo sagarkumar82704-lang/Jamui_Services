@@ -3606,7 +3606,210 @@ exports.adminSoftDeleteProvider = onCall({ cors: true }, async (request) => {
  * 8. Firebase Auth account permanent deletion (enables fresh registration with same phone/email)
  * 9. Immutable audit log generation in `/audit_logs`
  */
-exports.adminPermanentDeleteProvider = onCall({ cors: true }, async (request) => {
+const { 
+  validateAndGenerateUploadKey, 
+  generateR2PresignedPutUrl, 
+  generateR2PresignedGetUrl,
+  verifyAndEnforceObjectLimits,
+  handleStorageObjectDelete,
+  reconcileProviderStorageUsage,
+  resolveProviderStoragePlanLimits,
+  resolveBucketForFolder,
+  resolveBucketForObjectKey,
+  deleteR2Object,
+  putR2ObjectBytes,
+  setR2BucketCors
+} = require('./r2_storage_upload_handler');
+const R2_SECRETS = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME', 'R2_PRIVATE_BUCKET_NAME'];
+
+const ALLOWED_R2_PROVIDER_FOLDERS = Object.freeze([
+  'profile',
+  'business',
+  'workplace',
+  'listings',
+  'certificates',
+  'kyc',
+  'products'
+]);
+
+const ALLOWED_R2_DOMAINS = Object.freeze([
+  'images.apnajamui.in',
+  'img.apnajamui.com'
+]);
+
+function isAllowedR2Host(hostname) {
+  if (!hostname || typeof hostname !== 'string') return false;
+  const host = hostname.toLowerCase().trim();
+  if (host.endsWith('.r2.cloudflarestorage.com')) return true;
+  if (host.endsWith('.r2.dev')) return true;
+  if (ALLOWED_R2_DOMAINS.includes(host)) return true;
+  const envPublicDomain = (process.env.R2_PUBLIC_DOMAIN || '').toLowerCase().trim();
+  if (envPublicDomain && host === envPublicDomain) return true;
+  const envCustomDomain = (process.env.R2_CUSTOM_DOMAIN || '').toLowerCase().trim();
+  if (envCustomDomain && host === envCustomDomain) return true;
+  return false;
+}
+
+/**
+ * Uniform canonical R2 key validator for provider asset deletion.
+ * Handles raw keys, public/private URLs, query params, fragments, and percent-encoding safely.
+ * Prevents regex injection, host spoofing, and path traversal attacks.
+ */
+function canonicalizeAndValidateProviderR2Key(rawVal, expectedProviderId) {
+  if (!rawVal || typeof rawVal !== 'string') {
+    return { valid: false, reason: 'Input is empty or not a string' };
+  }
+
+  const trimmed = rawVal.trim();
+  if (!trimmed) {
+    return { valid: false, reason: 'Input is blank string' };
+  }
+
+  if (!expectedProviderId || typeof expectedProviderId !== 'string' || !expectedProviderId.trim()) {
+    return { valid: false, reason: 'expectedProviderId is invalid' };
+  }
+
+  const cleanProvId = expectedProviderId.trim();
+  let rawPath = trimmed;
+  let isCloudflareS3Host = false;
+
+  // 1. WHATWG URL Parsing & Hostname Allowlist Enforcement (Blocker 5)
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const parsed = new URL(trimmed);
+      if (!isAllowedR2Host(parsed.hostname)) {
+        return { valid: false, reason: `Untrusted URL host '${parsed.hostname}' not in R2 domain allowlist` };
+      }
+      if (parsed.hostname.toLowerCase().endsWith('.r2.cloudflarestorage.com')) {
+        isCloudflareS3Host = true;
+      }
+      rawPath = parsed.pathname;
+    } catch (e) {
+      return { valid: false, reason: `Malformed URL: ${e.message}` };
+    }
+  } else {
+    // Strip query string and fragment for raw keys
+    const qIdx = rawPath.indexOf('?');
+    if (qIdx !== -1) rawPath = rawPath.substring(0, qIdx);
+    const hIdx = rawPath.indexOf('#');
+    if (hIdx !== -1) rawPath = rawPath.substring(0, hIdx);
+  }
+
+  // 2. Safe Percent-Decoding & Double-Decode Traversal Prevention
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(rawPath);
+  } catch (e) {
+    return { valid: false, reason: `Malformed percent-encoding: ${e.message}` };
+  }
+
+  if (decodedPath.includes('%')) {
+    try {
+      const secondDecode = decodeURIComponent(decodedPath);
+      if (secondDecode !== decodedPath) {
+        decodedPath = secondDecode;
+      }
+    } catch (_) {}
+  }
+
+  // 3. Normalization & Traversal Prevention
+  const normalized = decodedPath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const rawSegments = normalized.split('/').filter(Boolean);
+  const segments = [];
+
+  for (const seg of rawSegments) {
+    if (seg === '.' || seg === '..' || seg.includes('..')) {
+      return { valid: false, reason: `Path traversal detected in segment '${seg}'` };
+    }
+    segments.push(seg);
+  }
+
+  // 4. Handle S3 endpoint bucket prefix (e.g. /bucketName/providers/provId/...)
+  if (isCloudflareS3Host && segments.length >= 5 && segments[0] !== 'providers' && segments[1] === 'providers') {
+    segments.shift(); // Remove bucket prefix safely
+  }
+
+  // 5. Structure and segment depth validation
+  if (segments.length < 4) {
+    return {
+      valid: false,
+      reason: 'Insufficient path depth for provider media (expected at least 4 segments: providers/{id}/{folder}/{file})'
+    };
+  }
+
+  if (segments[0] !== 'providers') {
+    return {
+      valid: false,
+      reason: `Path does not begin with 'providers/' root namespace (got '${segments[0]}')`
+    };
+  }
+
+  if (segments[1] !== cleanProvId) {
+    return {
+      valid: false,
+      reason: `Cross-provider violation: path belongs to '${segments[1]}', expected '${cleanProvId}'`
+    };
+  }
+
+  const folder = segments[2].toLowerCase();
+  if (!ALLOWED_R2_PROVIDER_FOLDERS.includes(folder)) {
+    return {
+      valid: false,
+      reason: `Invalid provider media folder '${segments[2]}'. Allowed: ${ALLOWED_R2_PROVIDER_FOLDERS.join(', ')}`
+    };
+  }
+
+  if (folder === 'listings' && segments.length < 5) {
+    return {
+      valid: false,
+      reason: 'Insufficient path depth for provider listing media (expected at least 5 segments: providers/{id}/listings/{listingId}/{file})'
+    };
+  }
+
+  const canonicalKey = segments.join('/');
+  const isPrivate = folder === 'certificates' || folder === 'kyc';
+
+  return {
+    valid: true,
+    canonicalKey,
+    folder,
+    isPrivate
+  };
+}
+
+/**
+ * Robust media reference extractor.
+ * Unpacks strings, arrays, and supported maps ({ url, storageKey, objectKey, image }).
+ * Fails closed on unsupported non-empty types (numbers, booleans, invalid objects).
+ */
+function extractMediaReferences(val, locationDescription) {
+  if (val === null || val === undefined) return [];
+  if (typeof val === 'string') {
+    const s = val.trim();
+    return s.length > 0 ? [{ value: s, location: locationDescription }] : [];
+  }
+  if (Array.isArray(val)) {
+    const extracted = [];
+    val.forEach((item, idx) => {
+      extracted.push(...extractMediaReferences(item, `${locationDescription}[${idx}]`));
+    });
+    return extracted;
+  }
+  if (typeof val === 'object') {
+    const candidate = val.url || val.storageKey || val.objectKey || val.image;
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return [{ value: candidate.trim(), location: `${locationDescription}.(url|storageKey)` }];
+    }
+    const err = new Error(`Unsupported non-empty object format in ${locationDescription}: keys [${Object.keys(val).join(', ')}]`);
+    err.code = 'unsupported-format';
+    throw err;
+  }
+  const err = new Error(`Unsupported non-empty value of type '${typeof val}' in ${locationDescription}`);
+  err.code = 'unsupported-format';
+  throw err;
+}
+
+exports.adminPermanentDeleteProvider = onCall({ cors: true, secrets: R2_SECRETS }, async (request) => {
   // 1. Strict Server-Side Role Verification via `admin_users` collection (Super Admin required)
   const { uid: callerUid, email: callerEmail } = await verifyActiveAdmin(request, { requireSuperAdmin: true });
 
@@ -3666,43 +3869,210 @@ exports.adminPermanentDeleteProvider = onCall({ cors: true }, async (request) =>
   task.status = 'in_progress';
   await taskRef.set(task, { merge: true });
 
-  // STEP A: Storage Enumeration and Cleanup
-  if (!task.stepProgress.storage_cleaned) {
+  // STEP A: Cloudflare R2 Storage Enumeration and Cleanup (Fail-Closed)
+  if (!task.stepProgress.storage_cleaned || task.stepProgress.storage_cleanup_system !== 'cloudflare_r2') {
     try {
-      if (admin.storage && typeof admin.storage === 'function') {
-        let bucket = null;
-        try {
-          bucket = admin.storage().bucket();
-        } catch (bErr) {
-          const fallbackName = process.env.FIREBASE_STORAGE_BUCKET || 'jamui-services.appspot.com';
-          try {
-            bucket = admin.storage().bucket(fallbackName);
-          } catch (bErr2) {
-            logger.warn('Storage bucket lookup fallback note:', bErr2.message);
-          }
+      const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+      const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+      const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+      // BLOCKER 1: Remove all bucket defaults. Both must be explicitly configured and non-empty.
+      const publicBucket = (process.env.R2_BUCKET_NAME || '').trim();
+      const privateBucket = (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+
+      if (!accountId || !accessKeyId || !secretAccessKey || !publicBucket || !privateBucket) {
+        task.status = 'blocked';
+        task.stepProgress.storage_cleaned = false;
+        task.stepProgress.storage_cleanup_status = 'skipped';
+        task.lastError = 'R2 configuration secrets or bucket names (R2_BUCKET_NAME, R2_PRIVATE_BUCKET_NAME) are missing or empty on backend.';
+        await taskRef.set(task, { merge: true });
+        throw new HttpsError(
+          'failed-precondition',
+          'Cloudflare R2 configuration is missing or incomplete (R2_BUCKET_NAME and R2_PRIVATE_BUCKET_NAME must be explicitly set). Deletion halted.'
+        );
+      }
+
+      // 1. Enumerate tracked storage objects from registry
+      const registryRef = db.collection('providers').doc(providerId).collection('storage_objects');
+      let regSnap;
+      try {
+        regSnap = await registryRef.get();
+      } catch (regErr) {
+        task.status = 'partial_failure';
+        task.stepProgress.storage_cleaned = false;
+        task.stepProgress.storage_cleanup_status = 'failed';
+        task.lastError = `Failed to query provider storage registry: ${regErr.message}`;
+        await taskRef.set(task, { merge: true });
+        throw new HttpsError('unavailable', `Storage registry query failed: ${regErr.message}. Permanent deletion stopped.`);
+      }
+
+      const r2KeysToDelete = new Map(); // canonicalKey -> { isPrivate, bucketName }
+
+      for (const doc of regSnap.docs) {
+        const regData = doc.data() || {};
+        const rawKey = regData.objectKey || doc.id;
+        const check = canonicalizeAndValidateProviderR2Key(rawKey, providerId);
+        if (!check.valid) {
+          task.status = 'partial_failure';
+          task.stepProgress.storage_cleaned = false;
+          task.stepProgress.storage_cleanup_status = 'failed';
+          task.lastError = `Corrupted storage registry key detected: '${rawKey}' (${check.reason})`;
+          await taskRef.set(task, { merge: true });
+          throw new HttpsError('data-loss', `Corrupted storage key in registry: ${check.reason}. Permanent deletion stopped.`);
         }
-        if (bucket && typeof bucket.deleteFiles === 'function') {
-          const prefixes = [
-            `providers/${providerId}/`,
-            `kyc_documents/${providerId}/`,
-            `profile_images/${providerId}/`
-          ];
-          for (const prefix of prefixes) {
-            try {
-              await bucket.deleteFiles({ prefix, force: true });
-            } catch (storageErr) {
-              logger.warn(`Storage prefix cleanup note [${prefix}]:`, storageErr.message);
+        const bucket = check.isPrivate ? privateBucket : publicBucket;
+        r2KeysToDelete.set(check.canonicalKey, { isPrivate: check.isPrivate, bucketName: bucket });
+      }
+
+      // 2. Discover URLs/keys embedded directly in provider profile (BLOCKER 2 & 4)
+      const rawProfileFields = [
+        { field: 'profileImageUrl', value: pData.profileImageUrl },
+        { field: 'profilePhotoUrl', value: pData.profilePhotoUrl },
+        { field: 'photoUrl', value: pData.photoUrl },
+        { field: 'businessImageUrl', value: pData.businessImageUrl },
+        { field: 'workplacePhotoUrl', value: pData.workplacePhotoUrl },
+        { field: 'experienceCertificateUrl', value: pData.experienceCertificateUrl },
+        { field: 'certificateUrl', value: pData.certificateUrl },
+        { field: 'experienceCertUrl', value: pData.experienceCertUrl },
+        { field: 'galleryImages', value: pData.galleryImages }
+      ];
+
+      for (const src of rawProfileFields) {
+        let refs = [];
+        try {
+          refs = extractMediaReferences(src.value, `profile.${src.field}`);
+        } catch (e) {
+          task.status = 'partial_failure';
+          task.stepProgress.storage_cleaned = false;
+          task.stepProgress.storage_cleanup_status = 'failed';
+          task.lastError = `Invalid non-empty media reference in profile field '${src.field}': ${e.message}`;
+          await taskRef.set(task, { merge: true });
+          throw new HttpsError('data-loss', task.lastError);
+        }
+
+        for (const r of refs) {
+          const check = canonicalizeAndValidateProviderR2Key(r.value, providerId);
+          if (!check.valid) {
+            task.status = 'partial_failure';
+            task.stepProgress.storage_cleaned = false;
+            task.stepProgress.storage_cleanup_status = 'failed';
+            task.lastError = `Invalid provider media reference in '${r.location}': '${r.value}' (${check.reason})`;
+            await taskRef.set(task, { merge: true });
+            throw new HttpsError('data-loss', task.lastError);
+          }
+          const bucket = check.isPrivate ? privateBucket : publicBucket;
+          r2KeysToDelete.set(check.canonicalKey, { isPrivate: check.isPrivate, bucketName: bucket });
+        }
+      }
+
+      // 3. Fail-Closed Discovery: Enumerate provider listings media (BLOCKER 2 & 4)
+      let listingsSnap;
+      try {
+        listingsSnap = await db.collection('provider_listings').where('providerId', '==', providerId).get();
+      } catch (listErr) {
+        task.status = 'partial_failure';
+        task.stepProgress.storage_cleaned = false;
+        task.stepProgress.storage_cleanup_status = 'failed';
+        task.lastError = `Failed to query provider listings for storage cleanup: ${listErr.message}`;
+        await taskRef.set(task, { merge: true });
+        throw new HttpsError('unavailable', `Provider listings storage discovery failed: ${listErr.message}. Permanent deletion stopped.`);
+      }
+
+      for (const lDoc of listingsSnap.docs) {
+        const lData = lDoc.data() || {};
+        const rawListingFields = [
+          { field: 'images', value: lData.images },
+          { field: 'storageKeys', value: lData.storageKeys },
+          { field: 'imageUrl', value: lData.imageUrl }
+        ];
+
+        for (const src of rawListingFields) {
+          let refs = [];
+          try {
+            refs = extractMediaReferences(src.value, `listing '${lDoc.id}'.${src.field}`);
+          } catch (e) {
+            task.status = 'partial_failure';
+            task.stepProgress.storage_cleaned = false;
+            task.stepProgress.storage_cleanup_status = 'failed';
+            task.lastError = `Invalid non-empty media reference in listing '${lDoc.id}' field '${src.field}': ${e.message}`;
+            await taskRef.set(task, { merge: true });
+            throw new HttpsError('data-loss', task.lastError);
+          }
+
+          for (const r of refs) {
+            const check = canonicalizeAndValidateProviderR2Key(r.value, providerId);
+            if (!check.valid) {
+              task.status = 'partial_failure';
+              task.stepProgress.storage_cleaned = false;
+              task.stepProgress.storage_cleanup_status = 'failed';
+              task.lastError = `Invalid listing media reference in '${r.location}': '${r.value}' (${check.reason})`;
+              await taskRef.set(task, { merge: true });
+              throw new HttpsError('data-loss', task.lastError);
             }
+            const bucket = check.isPrivate ? privateBucket : publicBucket;
+            r2KeysToDelete.set(check.canonicalKey, { isPrivate: check.isPrivate, bucketName: bucket });
           }
         }
       }
+
+      // 4. Execute permanent R2 object deletions with response verification (BLOCKER 3)
+      let deletedCount = 0;
+      const failedKeys = [];
+
+      for (const [key, meta] of r2KeysToDelete.entries()) {
+        try {
+          const res = await deleteR2Object({
+            accountId,
+            accessKeyId,
+            secretAccessKey,
+            bucketName: meta.bucketName,
+            objectKey: key
+          });
+
+          // Explicitly accept ONLY 200, 204, or 404
+          if (res && (res.statusCode === 200 || res.statusCode === 204 || res.statusCode === 404)) {
+            deletedCount++;
+          } else {
+            const status = res?.statusCode || 'malformed_response';
+            logger.error(`R2 deletion returned unaccepted status ${status} for key: ${key}`);
+            failedKeys.push({ key, status, error: `Unaccepted HTTP status: ${status}` });
+          }
+        } catch (delErr) {
+          logger.error(`R2 deletion request failed for key ${key}:`, delErr);
+          failedKeys.push({ key, status: delErr.code || 500, error: delErr.message });
+        }
+      }
+
+      if (failedKeys.length > 0) {
+        task.status = 'partial_failure';
+        task.stepProgress.storage_cleaned = false;
+        task.stepProgress.storage_cleanup_status = 'failed';
+        task.stepProgress.storage_keys_failed = failedKeys;
+        task.lastError = `Failed to delete ${failedKeys.length} R2 object(s). First error on '${failedKeys[0].key}': ${failedKeys[0].error}`;
+        await taskRef.set(task, { merge: true });
+        throw new HttpsError(
+          'internal',
+          `R2 storage cleanup failed for ${failedKeys.length} object(s). Permanent deletion stopped to prevent orphaned files.`
+        );
+      }
+
       task.stepProgress.storage_cleaned = true;
+      task.stepProgress.storage_cleanup_system = 'cloudflare_r2';
+      task.stepProgress.storage_cleanup_status = 'completed';
+      task.stepProgress.storage_keys_cleaned = deletedCount;
       await taskRef.set({ stepProgress: task.stepProgress, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     } catch (err) {
+      if (task.status === 'blocked') {
+        // PRESERVE BLOCKED STATUS! DO NOT OVERWRITE WITH FAILED!
+        await taskRef.set(task, { merge: true });
+        throw err;
+      }
       task.status = 'partial_failure';
-      task.lastError = `Storage cleanup failed: ${err.message}`;
+      task.stepProgress.storage_cleaned = false;
+      task.stepProgress.storage_cleanup_status = 'failed';
+      task.lastError = `R2 storage cleanup failed: ${err.message}`;
       await taskRef.set(task, { merge: true });
-      throw new HttpsError('internal', `Storage cleanup failed: ${err.message}`);
+      if (err instanceof HttpsError) throw err;
+      throw new HttpsError('internal', `R2 storage cleanup failed: ${err.message}`);
     }
   }
 
@@ -3893,108 +4263,10 @@ exports.adminPermanentDeleteProvider = onCall({ cors: true }, async (request) =>
   };
 });
 
-/**
- * 15. LINK PROVIDER EMAIL & PASSWORD
- * Authoritative Server-Side Linking: Securely links email/password credentials to an authenticated
- * phone-verified provider account using Firebase Admin SDK.
- * Bypasses client-side Email Enumeration Protection restrictions (operation-not-allowed)
- * while preserving single UID, verified mobile number, and existing provider profile.
- */
-exports.linkProviderEmailPassword = onCall({ cors: true }, async (request) => {
-  if (!request.auth || !request.auth.uid) {
-    throw new HttpsError('unauthenticated', 'प्रदाता क्रेडेंशियल लिंक करने के लिए ऑथेंटिकेशन (Authentication) अनिवार्य है।');
-  }
-
-  const uid = request.auth.uid;
-  const { email, password } = request.data || {};
-
-  if (!email || typeof email !== 'string' || !email.includes('@')) {
-    throw new HttpsError('invalid-argument', 'कृपया एक वैध ईमेल पता (Valid Email Address) प्रदान करें।');
-  }
-
-  if (!password || typeof password !== 'string' || password.length < 6) {
-    throw new HttpsError('invalid-argument', 'पासवर्ड कम से कम 6 अक्षरों का होना चाहिए।');
-  }
-
-  const cleanEmail = email.trim().toLowerCase();
-
-  try {
-    // 1. Verify caller has a phone number registered or exists in providers collection
-    const authUser = await admin.auth().getUser(uid);
-    const hasPhone = Boolean(authUser.phoneNumber || (authUser.providerUserInfo && authUser.providerUserInfo.some(p => p.providerId === 'phone')));
-    
-    if (!hasPhone) {
-      throw new HttpsError('failed-precondition', 'ईमेल और पासवर्ड लिंक करने से पहले मोबाइल नंबर का सत्यापन (OTP) अनिवार्य है।');
-    }
-
-    // 2. Prevent colliding with a different user's existing email
-    try {
-      const existingUser = await admin.auth().getUserByEmail(cleanEmail);
-      if (existingUser && existingUser.uid !== uid) {
-        throw new HttpsError('already-exists', 'यह ईमेल पहले से किसी अन्य खाते में पंजीकृत है। कृपया दूसरा ईमेल चुनें।');
-      }
-    } catch (lookupErr) {
-      if (lookupErr.code !== 'auth/user-not-found') {
-        throw lookupErr;
-      }
-    }
-
-    // 3. Update Auth record with email and password via Admin SDK
-    await admin.auth().updateUser(uid, {
-      email: cleanEmail,
-      password: password,
-      emailVerified: false,
-    });
-
-    // 4. Update Firestore provider profile email if doc exists
-    try {
-      const provRef = db.collection('providers').doc(uid);
-      const provDoc = await provRef.get();
-      if (provDoc.exists) {
-        await provRef.set({
-          email: cleanEmail,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-      }
-    } catch (fsErr) {
-      logger.warn(`Could not sync email to Firestore providers/${uid}:`, fsErr);
-    }
-
-    logger.info(`✅ Successfully linked email/password for Provider: ${uid} (${cleanEmail})`);
-
-    return {
-      success: true,
-      uid: uid,
-      email: cleanEmail,
-      message: 'ईमेल और पासवर्ड सफलतापूर्वक लिंक हो गया।',
-    };
-  } catch (err) {
-    if (err instanceof HttpsError) {
-      throw err;
-    }
-    logger.error(`Error linking email/password for provider ${uid}:`, err);
-    throw new HttpsError('internal', err.message || 'क्रेडेंशियल लिंक करने में विफलता।');
-  }
-});
 
 // ============================================================================
 // CLOUDFLARE R2 SECURE PRESIGNED UPLOAD INFRASTRUCTURE (PHASE 1B)
 // ============================================================================
-
-const { 
-  validateAndGenerateUploadKey, 
-  generateR2PresignedPutUrl, 
-  generateR2PresignedGetUrl,
-  verifyAndEnforceObjectLimits,
-  handleStorageObjectDelete,
-  reconcileProviderStorageUsage,
-  resolveProviderStoragePlanLimits,
-  resolveBucketForFolder,
-  resolveBucketForObjectKey,
-  DEFAULT_PUBLIC_BUCKET,
-  DEFAULT_PRIVATE_BUCKET
-} = require('./r2_storage_upload_handler');
-const R2_SECRETS = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME', 'R2_PRIVATE_BUCKET_NAME'];
 
 const R2_ALLOWED_ORIGINS = [
   'https://jamui-admin.web.app',
@@ -4020,11 +4292,16 @@ exports.getStorageUploadUrl = onCall({ cors: true, secrets: R2_SECRETS }, async 
       db: db
     });
 
-    const accountId = process.env.R2_ACCOUNT_ID;
-    const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-    const publicBucket = process.env.R2_BUCKET_NAME || DEFAULT_PUBLIC_BUCKET;
-    const privateBucket = process.env.R2_PRIVATE_BUCKET_NAME || DEFAULT_PRIVATE_BUCKET;
+    const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+    const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+    const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+    const publicBucket = (process.env.R2_BUCKET_NAME || '').trim();
+    const privateBucket = (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+
+    if (!accountId || !accessKeyId || !secretAccessKey || !publicBucket || !privateBucket) {
+      throw new HttpsError('failed-precondition', 'Cloudflare R2 configuration is missing or incomplete (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, and R2_PRIVATE_BUCKET_NAME must be explicitly set). Production fallback is strictly disabled.');
+    }
+
     const bucketName = validated.isPrivate ? privateBucket : publicBucket;
 
     const presigned = generateR2PresignedPutUrl({
@@ -4090,11 +4367,16 @@ exports.getSecureDocumentViewUrl = onCall({ cors: true, secrets: R2_SECRETS }, a
       await verifyActiveAdmin({ auth: request.auth });
     }
 
-    const accountId = process.env.R2_ACCOUNT_ID;
-    const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-    const publicBucket = process.env.R2_BUCKET_NAME || DEFAULT_PUBLIC_BUCKET;
-    const privateBucket = process.env.R2_PRIVATE_BUCKET_NAME || DEFAULT_PRIVATE_BUCKET;
+    const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+    const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+    const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+    const publicBucket = (process.env.R2_BUCKET_NAME || '').trim();
+    const privateBucket = (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+
+    if (!accountId || !accessKeyId || !secretAccessKey || !publicBucket || !privateBucket) {
+      throw new HttpsError('failed-precondition', 'Cloudflare R2 configuration is missing or incomplete (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, and R2_PRIVATE_BUCKET_NAME must be explicitly set). Production fallback is strictly disabled.');
+    }
+
     const bucketName = resolveBucketForObjectKey(rawKey, publicBucket, privateBucket);
 
     const presigned = generateR2PresignedGetUrl({
@@ -4119,6 +4401,76 @@ exports.getSecureDocumentViewUrl = onCall({ cors: true, secrets: R2_SECRETS }, a
     }
     logger.error('Error generating secure view URL:', err);
     throw new HttpsError('internal', err.message || 'Failed to generate secure document URL.');
+  }
+});
+
+/**
+ * Cloud Function: uploadStorageObject
+ * Server-side R2 upload handler for Web clients and platforms where direct browser S3 PUT
+ * is restricted by CORS. Enforces exact same authorization, ownership, quota, and size limits.
+ */
+exports.uploadStorageObject = onCall({ cors: true, secrets: R2_SECRETS }, async (request) => {
+  try {
+    const { folder, fileName, mimeType, base64Data, targetId } = request.data || {};
+    if (!base64Data || typeof base64Data !== 'string') {
+      throw new HttpsError('invalid-argument', 'base64Data is required.');
+    }
+
+    const buffer = Buffer.from(base64Data, 'base64');
+    const fileSize = buffer.length;
+
+    const validated = await validateAndGenerateUploadKey({
+      auth: request.auth,
+      data: { folder, fileName, mimeType, fileSize, targetId },
+      verifyActiveAdminFn: verifyActiveAdmin,
+      db: db
+    });
+
+    const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+    const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+    const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+    const publicBucket = (process.env.R2_BUCKET_NAME || '').trim();
+    const privateBucket = (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+
+    if (!accountId || !accessKeyId || !secretAccessKey || !publicBucket || !privateBucket) {
+      throw new HttpsError('failed-precondition', 'Cloudflare R2 configuration is missing.');
+    }
+
+    const bucketName = validated.isPrivate ? privateBucket : publicBucket;
+
+    await putR2ObjectBytes({
+      accountId,
+      accessKeyId,
+      secretAccessKey,
+      bucketName,
+      objectKey: validated.objectKey,
+      mimeType: validated.mimeType,
+      buffer
+    });
+
+    // Enforce quota limits and verify object on R2
+    const verifyResult = await verifyAndEnforceObjectLimits({
+      accountId,
+      accessKeyId,
+      secretAccessKey,
+      bucketName,
+      objectKey: validated.objectKey
+    });
+
+    return {
+      success: true,
+      objectKey: validated.objectKey,
+      actualSizeBytes: fileSize,
+      mimeType: validated.mimeType,
+      bucket: bucketName,
+      storageUsage: verifyResult.storageUsage
+    };
+  } catch (err) {
+    if (err.code && ['unauthenticated', 'permission-denied', 'invalid-argument', 'failed-precondition', 'not-found', 'resource-exhausted', 'unavailable'].includes(err.code)) {
+      throw new HttpsError(err.code, err.message);
+    }
+    logger.error('Error during uploadStorageObject:', err);
+    throw new HttpsError('internal', err.message || 'Failed to upload storage object.');
   }
 });
 
@@ -4155,15 +4507,35 @@ exports.verifyUploadedStorageObject = onCall({ cors: true, secrets: R2_SECRETS }
       if (reviewOwnerUid !== callerUid) {
         await verifyActiveAdmin({ auth: request.auth });
       }
+    } else if (rawKey.startsWith('diamond_shops/')) {
+      const parts = rawKey.split('/');
+      const shopId = parts[1];
+      let isOwner = false;
+      if (db) {
+        try {
+          const shopSnap = await db.collection('diamond_shops').doc(shopId).get();
+          if (shopSnap.exists && (shopSnap.data().ownerUid === callerUid || shopId === callerUid)) {
+            isOwner = true;
+          }
+        } catch (_) {}
+      }
+      if (!isOwner) {
+        await verifyActiveAdmin({ auth: request.auth });
+      }
     } else {
       await verifyActiveAdmin({ auth: request.auth });
     }
 
-    const accountId = process.env.R2_ACCOUNT_ID;
-    const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-    const publicBucket = process.env.R2_BUCKET_NAME || DEFAULT_PUBLIC_BUCKET;
-    const privateBucket = process.env.R2_PRIVATE_BUCKET_NAME || DEFAULT_PRIVATE_BUCKET;
+    const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+    const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+    const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+    const publicBucket = (process.env.R2_BUCKET_NAME || '').trim();
+    const privateBucket = (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+
+    if (!accountId || !accessKeyId || !secretAccessKey || !publicBucket || !privateBucket) {
+      throw new HttpsError('failed-precondition', 'Cloudflare R2 configuration is missing or incomplete (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, and R2_PRIVATE_BUCKET_NAME must be explicitly set). Production fallback is strictly disabled.');
+    }
+
     const bucketName = resolveBucketForObjectKey(rawKey, publicBucket, privateBucket);
 
     const verified = await verifyAndEnforceObjectLimits({
@@ -4254,11 +4626,15 @@ exports.verifyUploadedStorageObject = onCall({ cors: true, secrets: R2_SECRETS }
  */
 exports.deleteStorageObject = onCall({ cors: true, secrets: R2_SECRETS }, async (request) => {
   try {
-    const accountId = process.env.R2_ACCOUNT_ID;
-    const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-    const publicBucket = process.env.R2_BUCKET_NAME || DEFAULT_PUBLIC_BUCKET;
-    const privateBucket = process.env.R2_PRIVATE_BUCKET_NAME || DEFAULT_PRIVATE_BUCKET;
+    const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+    const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+    const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+    const publicBucket = (process.env.R2_BUCKET_NAME || '').trim();
+    const privateBucket = (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+
+    if (!accountId || !accessKeyId || !secretAccessKey || !publicBucket || !privateBucket) {
+      throw new HttpsError('failed-precondition', 'Cloudflare R2 configuration is missing or incomplete (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, and R2_PRIVATE_BUCKET_NAME must be explicitly set). Production fallback is strictly disabled.');
+    }
 
     const result = await handleStorageObjectDelete({
       auth: request.auth,
@@ -4280,6 +4656,48 @@ exports.deleteStorageObject = onCall({ cors: true, secrets: R2_SECRETS }, async 
     logger.error('Error deleting storage object:', err);
     throw new HttpsError('internal', err.message || 'Failed to delete storage object.');
   }
+});
+
+/**
+ * Cloud Function: adminConfigureR2Cors
+ * Configures S3 CORS rules on Cloudflare R2 public & private buckets.
+ * Required so browser fetch / PUT calls from web apps do not fail with CORS.
+ */
+exports.adminConfigureR2Cors = onCall({ cors: true, secrets: R2_SECRETS }, async (request) => {
+  if (!request.auth || !request.auth.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+  const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+  const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+  const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+  const publicBucket = (process.env.R2_BUCKET_NAME || '').trim();
+  const privateBucket = (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+
+  if (!accountId || !accessKeyId || !secretAccessKey || !publicBucket || !privateBucket) {
+    throw new HttpsError('failed-precondition', 'Cloudflare R2 configuration is missing.');
+  }
+
+  const allowedOrigins = [
+    'https://jamui-services-staging-provider.web.app',
+    'https://jamui-services-staging-admin.web.app',
+    'https://jamui-services-provider.web.app',
+    'https://jamui-services-admin.web.app',
+    'https://apnajamui.in',
+    '*'
+  ];
+
+  const publicRes = await setR2BucketCors({
+    accountId, accessKeyId, secretAccessKey, bucketName: publicBucket, allowedOrigins
+  });
+
+  const privateRes = await setR2BucketCors({
+    accountId, accessKeyId, secretAccessKey, bucketName: privateBucket, allowedOrigins
+  });
+
+  return {
+    publicBucket: { name: publicBucket, status: publicRes.statusCode, body: publicRes.body },
+    privateBucket: { name: privateBucket, status: privateRes.statusCode, body: privateRes.body }
+  };
 });
 
 /**
@@ -4334,6 +4752,46 @@ function calculateHaversineKm(lat1, lon1, lat2, lon2) {
 }
 
 /**
+ * Server-authoritative Professional Shop sellability check (single source of truth).
+ * A shop may sell only when it is approved, active, not suspended/blocked/deleted,
+ * has an active subscription, and that subscription has not expired (server time).
+ * Legacy shops with no subscriptionExpiry keep their previous behaviour (flag only).
+ * Returns null when eligible, otherwise a human-readable rejection reason.
+ */
+function getProfessionalShopIneligibilityReason(shopData, nowMs = Date.now()) {
+  const s = shopData || {};
+  if (s.isDeleted === true) return 'This shop is no longer available.';
+  if (s.isApproved !== true || s.status !== 'approved') return 'This shop is pending approval or not active.';
+  if (s.isActive === false || s.status === 'suspended' || s.status === 'blocked') return 'This shop is currently suspended or inactive.';
+  if (s.isSubscriptionActive !== true) return 'This shop does not have an active subscription.';
+  const exp = s.subscriptionExpiry;
+  if (exp) {
+    const expMs = typeof exp.toMillis === 'function' ? exp.toMillis() : new Date(exp).getTime();
+    if (!Number.isNaN(expMs) && expMs <= nowMs) return 'This shop subscription has expired.';
+  }
+  return null;
+}
+exports._getProfessionalShopIneligibilityReason = getProfessionalShopIneligibilityReason;
+
+/**
+ * Calculates authoritative base integer units (e.g. grams, milliliters)
+ * to prevent floating-point rounding errors in bulk inventory.
+ */
+function calculateBaseUnits(unit, value) {
+  const u = String(unit || '').toLowerCase().trim();
+  const v = Number(value || 1);
+  if (!Number.isFinite(v) || v <= 0) return 1;
+  if (u === 'kg' || u === 'kilogram' || u === 'kgs') return Math.round(v * 1000);
+  if (u === 'g' || u === 'gram' || u === 'gm' || u === 'gms') return Math.round(v);
+  if (u === 'mg' || u === 'milligram') return Math.max(1, Math.round(v));
+  if (u === 'l' || u === 'liter' || u === 'litre' || u === 'ltr') return Math.round(v * 1000);
+  if (u === 'ml' || u === 'milliliter') return Math.round(v);
+  if (u === 'dozen' || u === 'dz' || u === 'दर्जन') return Math.round(v * 12);
+  return Math.round(v);
+}
+exports._calculateBaseUnits = calculateBaseUnits;
+
+/**
  * Cloud Function: placeDiamondOrder
  * Secure, zero-trust order placement for Diamond Category mini e-commerce.
  * - Authenticates caller.
@@ -4345,7 +4803,7 @@ function calculateHaversineKm(lat1, lon1, lat2, lon2) {
  * - Creates order with initial 'placed' state.
  * - Dispatches FCM notification to shopkeeper without failing transaction if messaging fails.
  */
-exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
+exports.placeDiamondOrder = onCall({ cors: true, invoker: 'public' }, async (request) => {
   try {
     if (!request.auth || !request.auth.uid) {
       throw new HttpsError('unauthenticated', 'You must be logged in to place an order.');
@@ -4374,27 +4832,42 @@ exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
       throw new HttpsError('invalid-argument', `Invalid delivery method: ${deliveryMethod}`);
     }
 
-    // 1. Idempotency Check
-    if (idempotencyKey && typeof idempotencyKey === 'string' && idempotencyKey.trim().length > 0) {
-      const existingQuery = await db.collection('diamond_orders')
-        .where('customerId', '==', callerUid)
-        .where('idempotencyKey', '==', idempotencyKey.trim())
-        .limit(1)
-        .get();
+    // 1. Idempotency Setup & Canonical Payload Fingerprinting
+    const sortedItemsForHash = [...items].map(it => ({
+      productId: String(it.productId || '').trim(),
+      variantId: (it.variantId && typeof it.variantId === 'string' && it.variantId.trim().length > 0) ? it.variantId.trim() : null,
+      quantity: parseInt(it.quantity, 10) || 0
+    })).sort((a, b) => (a.productId + (a.variantId || '')).localeCompare(b.productId + (b.variantId || '')));
 
-      if (!existingQuery.empty) {
-        const existingDoc = existingQuery.docs[0];
-        const existingData = existingDoc.data();
-        logger.info(`[placeDiamondOrder] Idempotent hit: Returning existing order ${existingDoc.id}`);
-        return {
-          success: true,
-          orderId: existingDoc.id,
-          orderNumber: existingData.orderNumber,
-          totalAmount: existingData.totalAmount,
-          isDuplicate: true,
-          message: 'Order already placed.'
-        };
-      }
+    let normalizedDeliveryAddress = null;
+    if (deliveryMethod === 'delivery' && deliveryAddress && typeof deliveryAddress === 'object') {
+      const rawLat = Number(deliveryAddress.latitude) || 0;
+      const rawLng = Number(deliveryAddress.longitude) || 0;
+      normalizedDeliveryAddress = {
+        address: String(deliveryAddress.address || '').trim(),
+        area: String(deliveryAddress.area || '').trim(),
+        contactPhone: String(deliveryAddress.contactPhone || '').trim(),
+        customerName: String(deliveryAddress.customerName || '').trim(),
+        latitude: rawLat,
+        longitude: rawLng
+      };
+    }
+
+    const canonicalPayloadString = JSON.stringify({
+      shopId: shopId.trim(),
+      deliveryMethod: deliveryMethod,
+      items: sortedItemsForHash,
+      deliveryAddress: normalizedDeliveryAddress
+    });
+    const crypto = require('crypto');
+    const payloadFingerprint = crypto.createHash('sha256').update(canonicalPayloadString).digest('hex');
+
+    // Deterministic Idempotency Reservation Document Reference
+    let reservationRef = null;
+    let reservationDocId = null;
+    if (idempotencyKey && typeof idempotencyKey === 'string' && idempotencyKey.trim().length > 0) {
+      reservationDocId = `${callerUid}_${idempotencyKey.trim()}`;
+      reservationRef = db.collection('idempotency_reservations').doc(reservationDocId);
     }
 
     // 2. Fetch Shop Details & Validate Operational Status
@@ -4417,6 +4890,13 @@ exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
 
     if (shopData.isSubscriptionActive !== true) {
       throw new HttpsError('failed-precondition', 'This shop does not have an active subscription.');
+    }
+
+    {
+      const ineligible = getProfessionalShopIneligibilityReason(shopData);
+      if (ineligible) {
+        throw new HttpsError('failed-precondition', ineligible);
+      }
     }
 
     if (shopData.status === 'closed' || shopData.isOpen === false) {
@@ -4461,15 +4941,18 @@ exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
       if (isNaN(qty) || qty <= 0) {
         throw new HttpsError('invalid-argument', `Invalid quantity for product ${item.productId}.`);
       }
+      const variantId = (item.variantId && typeof item.variantId === 'string' && item.variantId.trim().length > 0)
+        ? item.variantId.trim()
+        : null;
       sanitizedItems.push({
         productId: item.productId.trim(),
+        variantId: variantId,
         quantity: qty
       });
     }
 
     // 5. Atomic Transaction: Authoritative Price Verification, Stock Check & Deduction, Order Creation
     const orderRef = db.collection('diamond_orders').doc();
-    const orderNumber = 'ORD' + Date.now().toString().slice(-6) + Math.floor(100 + Math.random() * 900);
 
     const result = await db.runTransaction(async (transaction) => {
       // Re-read shop inside transaction
@@ -4479,67 +4962,308 @@ exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
           currentShop?.isApproved !== true || 
           currentShop?.status !== 'approved' || 
           currentShop?.isActive === false || 
-          currentShop?.isSubscriptionActive !== true) {
-        throw new HttpsError('failed-precondition', 'Shop became unavailable, suspended, or unapproved during checkout.');
+          currentShop?.isSubscriptionActive !== true ||
+          getProfessionalShopIneligibilityReason(currentShop) !== null) {
+        throw new HttpsError('failed-precondition', 'Shop became unavailable, suspended, expired, or unapproved during checkout.');
       }
 
-      // Read all products atomically
+      // Check Atomic Idempotency Reservation
+      if (reservationRef) {
+        const resDoc = await transaction.get(reservationRef);
+        if (resDoc.exists) {
+          const resData = resDoc.data() || {};
+          // Enforce strict payload & shop binding: conflict if same key with different payload
+          if (resData.shopId !== shopId.trim() || resData.payloadFingerprint !== payloadFingerprint) {
+            throw new HttpsError('already-exists', 'Idempotency conflict: Key already used with different shop or payload.');
+          }
+          if (resData.status === 'completed' && resData.orderId) {
+            logger.info(`[placeDiamondOrder] Deterministic idempotent hit: Returning existing order ${resData.orderId}`);
+            return {
+              orderId: resData.orderId,
+              orderNumber: resData.orderNumber || resData.orderId,
+              sellerOrderNumber: resData.sellerOrderNumber || null,
+              channelId: resData.channelId || 'JAMUI_SERVICES',
+              totalAmount: resData.totalAmount,
+              isDuplicate: true
+            };
+          }
+        }
+      }
+
+      // Read Platform Orders Counter for Globally Unique Sequential Platform Order ID (JS-284731)
+      const counterRef = db.collection('counters').doc('platform_orders');
+      const counterDoc = await transaction.get(counterRef);
+
+      // Verify or Assign Stable, Permanent, Globally Unique shopCode
+      let assignedShopCode = (currentShop.shopCode && typeof currentShop.shopCode === 'string')
+        ? currentShop.shopCode.trim().toUpperCase()
+        : null;
+      let shopCodeReservationRef = null;
+
+      if (!assignedShopCode) {
+        // Derive stable 3-4 character uppercase candidate shop code
+        const rawShopName = (currentShop.shopName || currentShop.businessName || 'SHOP').trim();
+        const words = rawShopName.split(/\s+/).filter(w => w.length > 0);
+        let candidate = '';
+        if (words.length >= 3) {
+          candidate = words.map(w => w[0]).join('').toUpperCase().slice(0, 4);
+        } else if (words.length === 2) {
+          candidate = (words[0].slice(0, 2) + words[1].slice(0, 2)).toUpperCase();
+        } else {
+          candidate = rawShopName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 4);
+        }
+        if (candidate.length < 3) {
+          candidate = (candidate + 'SHP').slice(0, 3);
+        }
+
+        shopCodeReservationRef = db.collection('shop_codes').doc(candidate);
+        const codeDoc = await transaction.get(shopCodeReservationRef);
+        if (codeDoc.exists && codeDoc.data()?.shopId !== shopId.trim()) {
+          // Collision resolution: append clean alphanumeric suffix from shopId
+          const suffix = shopId.trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(-2);
+          candidate = `${candidate.slice(0, 2)}${suffix}`;
+          shopCodeReservationRef = db.collection('shop_codes').doc(candidate);
+        }
+        assignedShopCode = candidate;
+      }
+
+      // Read all products and variants atomically (MUST complete all transaction.get before any writes)
       const productDocs = [];
       for (const sItem of sanitizedItems) {
         const prodRef = shopRef.collection('products').doc(sItem.productId);
         const pDoc = await transaction.get(prodRef);
-        productDocs.push({ pDoc, sItem, prodRef });
+        let varRef = null;
+        let vDoc = null;
+        if (sItem.variantId) {
+          varRef = prodRef.collection('variants').doc(sItem.variantId);
+          vDoc = await transaction.get(varRef);
+        }
+        productDocs.push({ pDoc, varRef, vDoc, sItem, prodRef });
       }
+
+      // Allocate Platform Online Order ID (JS-284731 safe initialization offset)
+      const PLATFORM_ORDER_START_OFFSET = 284731;
+      let nextPlatformSeq = PLATFORM_ORDER_START_OFFSET;
+      if (counterDoc.exists) {
+        const last = Number(counterDoc.data()?.lastOrderNumber);
+        if (Number.isFinite(last) && last >= PLATFORM_ORDER_START_OFFSET) {
+          nextPlatformSeq = last + 1;
+        }
+      }
+      const platformOrderNumber = `JS-${nextPlatformSeq}`;
+      const orderNumber = platformOrderNumber;
+
+      // Allocate Seller-Scoped Continuous Order Number (e.g. SGJ-019)
+      const currentSellerSeq = (Number(currentShop.sellerOrderCounter) || 0) + 1;
+      const sellerOrderNumber = `${assignedShopCode}-${String(currentSellerSeq).padStart(3, '0')}`;
+      const channelId = 'JAMUI_SERVICES';
+      const sellerToken = null;
+      const invoiceNumber = null;
 
       let subtotal = 0;
       const verifiedOrderItems = [];
       const stockUpdates = [];
 
-      for (const { pDoc, sItem, prodRef } of productDocs) {
+      for (const { pDoc, varRef, vDoc, sItem, prodRef } of productDocs) {
         if (!pDoc.exists) {
           throw new HttpsError('not-found', `Product with ID ${sItem.productId} was not found in this shop.`);
         }
 
-        const pData = pDoc.data();
+        const pData = pDoc.data() || {};
+        const pTitle = String(pData.title || pData.titleHindi || pData.titleEnglish || pData.name || 'Product');
 
         if (pData.isAvailable === false) {
-          throw new HttpsError('failed-precondition', `Product '${pData.name || sItem.productId}' is currently unavailable.`);
+          throw new HttpsError('failed-precondition', `Product '${pTitle}' is currently unavailable.`);
         }
 
         if (pData.inStock === false) {
-          throw new HttpsError('failed-precondition', `Product '${pData.name || sItem.productId}' is out of stock.`);
+          throw new HttpsError('failed-precondition', `Product '${pTitle}' is out of stock.`);
         }
 
-        // Stock deduction check if tracking inventory
-        if (pData.stockQuantity !== undefined && pData.stockQuantity !== null) {
-          const currentStock = Number(pData.stockQuantity);
-          if (currentStock < sItem.quantity) {
-            throw new HttpsError(
-              'failed-precondition',
-              `Insufficient stock for '${pData.name || sItem.productId}'. Requested: ${sItem.quantity}, Available: ${currentStock}.`
-            );
+        const basePrice = Number(pData.sellingPrice !== undefined ? pData.sellingPrice : (pData.price || 0));
+        const baseMrp = Number(pData.mrp || basePrice);
+        const parentTotalStock = Number(pData.totalStockQuantity !== undefined ? pData.totalStockQuantity : (pData.stockQuantity || 0));
+
+        // Case A: Variant Product
+        if (pData.hasVariants === true) {
+          if (!sItem.variantId) {
+            throw new HttpsError('invalid-argument', `Product '${pTitle}' requires a variant selection.`);
           }
-          stockUpdates.push({
-            prodRef,
-            newStock: currentStock - sItem.quantity
+
+          if (!vDoc || !vDoc.exists) {
+            throw new HttpsError('not-found', `Variant with ID '${sItem.variantId}' was not found for product '${pTitle}'.`);
+          }
+
+          const vData = vDoc.data() || {};
+
+          if (vData.isActive === false) {
+            throw new HttpsError('failed-precondition', `Variant '${vData.title || sItem.variantId}' is currently inactive.`);
+          }
+
+          if (vData.inStock === false) {
+            throw new HttpsError('failed-precondition', `Variant '${vData.title || sItem.variantId}' is out of stock.`);
+          }
+
+          // Authoritative stock deduction check on variant (Bulk vs Pack)
+          const isBulkProduct = pData.stockType === 'bulk';
+          let optionBaseUnits = null;
+          let totalBaseUnitsNeeded = null;
+
+          if (isBulkProduct) {
+            let bUnits = Number(vData.baseUnitsPerOption);
+            if (!Number.isFinite(bUnits) || bUnits <= 0) {
+              const optUnit = vData.selectedOptions?.Unit || vData.unit || pData.unit;
+              const optVal = vData.selectedOptions?.Value || vData.unitValue || 1;
+              bUnits = calculateBaseUnits(optUnit, optVal);
+            }
+            optionBaseUnits = bUnits;
+            totalBaseUnitsNeeded = bUnits * sItem.quantity;
+            stockUpdates.push({
+              isBulk: true,
+              isVariant: true,
+              prodRef,
+              varRef,
+              productId: sItem.productId,
+              variantId: sItem.variantId,
+              variantTitle: String(vData.title || ''),
+              sku: String(vData.sku || ''),
+              productName: String(vData.title || pTitle),
+              unit: String(pData.unit || ''),
+              deductQty: sItem.quantity,
+              baseUnitsPerOption: optionBaseUnits,
+              deductBaseUnits: totalBaseUnitsNeeded,
+              parentBaseStock: Number(pData.baseStockQuantity !== undefined ? pData.baseStockQuantity : (parentTotalStock * 1000 || 0))
+            });
+          } else if (vData.stockQuantity !== undefined && vData.stockQuantity !== null) {
+            const currentVariantStock = Number(vData.stockQuantity);
+            if (currentVariantStock < sItem.quantity) {
+              throw new HttpsError(
+                'failed-precondition',
+                `Insufficient stock for '${vData.title || pTitle}'. Requested: ${sItem.quantity}, Available: ${currentVariantStock}.`
+              );
+            }
+            stockUpdates.push({
+              isBulk: false,
+              isVariant: true,
+              prodRef,
+              varRef,
+              productId: sItem.productId,
+              variantId: sItem.variantId,
+              variantTitle: String(vData.title || ''),
+              sku: String(vData.sku || ''),
+              productName: String(vData.title || pTitle),
+              deductQty: sItem.quantity,
+              currentStock: currentVariantStock,
+              newStock: currentVariantStock - sItem.quantity,
+              parentTotalStock: parentTotalStock
+            });
+          }
+
+          // Authoritative variant pricing calculation
+          let unitPrice = basePrice;
+          let unitMrp = baseMrp;
+          if (vData.priceMode === 'override' && vData.price !== undefined && vData.price !== null) {
+            unitPrice = Number(vData.price);
+            unitMrp = Number(vData.mrp !== undefined && vData.mrp !== null ? vData.mrp : baseMrp);
+          }
+          const itemTotal = unitPrice * sItem.quantity;
+          subtotal += itemTotal;
+
+          verifiedOrderItems.push({
+            productId: sItem.productId,
+            variantId: sItem.variantId,
+            variantTitle: String(vData.title || ''),
+            sku: String(vData.sku || ''),
+            selectedOptions: vData.selectedOptions || null,
+            name: pTitle,
+            title: pTitle,
+            imageUrl: String(vData.thumbnailUrl || (Array.isArray(vData.images) && vData.images[0]) || pData.imageUrl || ''),
+            unit: String(pData.unit || ''),
+            price: unitPrice,
+            mrp: unitMrp,
+            quantity: sItem.quantity,
+            itemTotal: itemTotal,
+            stockType: isBulkProduct ? 'bulk' : 'pack',
+            baseUnitsPerOption: optionBaseUnits,
+            totalBaseUnits: totalBaseUnitsNeeded
+          });
+        } else {
+          // Case B: Simple Product (Preserves 100% legacy behavior for pack products, fixes loose/bulk products)
+          const isBulkProduct = pData.stockType === 'bulk';
+          let optionBaseUnits = null;
+          let totalBaseUnitsNeeded = null;
+
+          if (isBulkProduct) {
+            optionBaseUnits = calculateBaseUnits(pData.unit, 1);
+            totalBaseUnitsNeeded = optionBaseUnits * sItem.quantity;
+            const parentBaseStock = Number(pData.baseStockQuantity !== undefined ? pData.baseStockQuantity : (parentTotalStock * 1000 || 0));
+            if (parentBaseStock < totalBaseUnitsNeeded) {
+              throw new HttpsError(
+                'failed-precondition',
+                `Insufficient stock for '${pTitle}'. Requested: ${sItem.quantity} ${pData.unit || ''}, Available: ${pData.stockQuantity !== undefined ? pData.stockQuantity : (parentBaseStock / (optionBaseUnits || 1))}.`
+              );
+            }
+            stockUpdates.push({
+              isBulk: true,
+              isVariant: false,
+              prodRef,
+              productId: sItem.productId,
+              variantId: null,
+              variantTitle: null,
+              sku: String(pData.sku || ''),
+              productName: pTitle,
+              unit: String(pData.unit || ''),
+              deductQty: sItem.quantity,
+              baseUnitsPerOption: optionBaseUnits,
+              deductBaseUnits: totalBaseUnitsNeeded,
+              parentBaseStock: parentBaseStock
+            });
+          } else if (pData.stockQuantity !== undefined && pData.stockQuantity !== null) {
+            const currentStock = Number(pData.stockQuantity);
+            if (currentStock < sItem.quantity) {
+              throw new HttpsError(
+                'failed-precondition',
+                `Insufficient stock for '${pTitle}'. Requested: ${sItem.quantity}, Available: ${currentStock}.`
+              );
+            }
+            stockUpdates.push({
+              isBulk: false,
+              isVariant: false,
+              prodRef,
+              productId: sItem.productId,
+              variantId: null,
+              variantTitle: null,
+              sku: String(pData.sku || ''),
+              productName: pTitle,
+              deductQty: sItem.quantity,
+              currentStock: currentStock,
+              newStock: currentStock - sItem.quantity,
+              parentTotalStock: currentStock
+            });
+          }
+
+          const unitPrice = basePrice;
+          const itemTotal = unitPrice * sItem.quantity;
+          subtotal += itemTotal;
+
+          verifiedOrderItems.push({
+            productId: sItem.productId,
+            variantId: null,
+            variantTitle: null,
+            sku: String(pData.sku || ''),
+            name: pTitle,
+            title: pTitle,
+            imageUrl: String(pData.imageUrl || ''),
+            unit: String(pData.unit || ''),
+            price: unitPrice,
+            mrp: baseMrp,
+            quantity: sItem.quantity,
+            itemTotal: itemTotal,
+            stockType: isBulkProduct ? 'bulk' : 'pack',
+            baseUnitsPerOption: optionBaseUnits,
+            totalBaseUnits: totalBaseUnitsNeeded
           });
         }
-
-        // Authoritative server-side price calculation (client price completely ignored)
-        const unitPrice = Number(pData.sellingPrice !== undefined ? pData.sellingPrice : (pData.price || 0));
-        const itemTotal = unitPrice * sItem.quantity;
-        subtotal += itemTotal;
-
-        verifiedOrderItems.push({
-          productId: sItem.productId,
-          name: String(pData.name || 'Product'),
-          imageUrl: String(pData.imageUrl || ''),
-          unit: String(pData.unit || ''),
-          price: unitPrice,
-          mrp: Number(pData.mrp || unitPrice),
-          quantity: sItem.quantity,
-          itemTotal: itemTotal
-        });
       }
 
       // Authoritative Delivery Fee calculation
@@ -4554,23 +5278,179 @@ exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
 
       const totalAmount = subtotal + deliveryFee;
 
-      // Apply atomic stock deductions
+      // Apply atomic stock deductions & record stock movements
+      // 1. Process Bulk Inventory Deductions (Shared base unit stock per product)
+      const bulkAggregates = new Map();
       for (const update of stockUpdates) {
-        transaction.update(update.prodRef, {
-          stockQuantity: update.newStock,
-          inStock: update.newStock > 0,
-          updatedAt: FieldValue.serverTimestamp()
-        });
+        if (update.isBulk) {
+          const cur = bulkAggregates.get(update.productId) || {
+            prodRef: update.prodRef,
+            productName: update.productName,
+            unit: update.unit,
+            totalBaseNeeded: 0,
+            parentBaseStock: update.parentBaseStock,
+            items: []
+          };
+          cur.totalBaseNeeded += update.deductBaseUnits;
+          cur.items.push(update);
+          bulkAggregates.set(update.productId, cur);
+        }
       }
 
-      // Record Order
+      for (const [prodId, bulkAgg] of bulkAggregates.entries()) {
+        if (bulkAgg.parentBaseStock < bulkAgg.totalBaseNeeded) {
+          throw new HttpsError(
+            'failed-precondition',
+            `Insufficient shared stock for '${bulkAgg.productName}'. Requested: ${bulkAgg.totalBaseNeeded} base units, Available: ${bulkAgg.parentBaseStock} base units.`
+          );
+        }
+        const newBaseStock = bulkAgg.parentBaseStock - bulkAgg.totalBaseNeeded;
+        const u = String(bulkAgg.unit || '').toLowerCase().trim();
+        const mult = (u === 'kg' || u === 'kilogram' || u === 'kgs' || u === 'l' || u === 'liter' || u === 'litre' || u === 'ltr') ? 1000 : 1;
+        const newStockQty = mult === 1000 ? Number((newBaseStock / 1000).toFixed(3)) : newBaseStock;
+        transaction.update(bulkAgg.prodRef, {
+          baseStockQuantity: newBaseStock,
+          stockQuantity: newStockQty,
+          inStock: newBaseStock > 0,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+
+        for (const item of bulkAgg.items) {
+          const movementRef = shopRef.collection('stock_movements').doc();
+          transaction.set(movementRef, {
+            id: movementRef.id,
+            shopId: shopId.trim(),
+            productId: item.productId,
+            variantId: item.variantId,
+            variantTitle: item.variantTitle,
+            sku: item.sku,
+            productName: item.productName,
+            stockType: 'bulk',
+            baseUnitsDeducted: item.deductBaseUnits,
+            changeAmount: -item.deductQty,
+            previousBaseStock: bulkAgg.parentBaseStock,
+            newBaseStock: newBaseStock,
+            movementType: 'order_deduction',
+            orderId: orderRef.id,
+            orderNumber: orderNumber,
+            reason: item.variantTitle
+              ? `Order #${orderNumber}: bulk stock deduction (${item.deductQty} x ${item.variantTitle})`
+              : `Order #${orderNumber}: bulk stock deduction (${item.deductQty} ${item.unit || 'units'})`,
+            actorUid: callerUid,
+            actorRole: 'customer',
+            createdAt: FieldValue.serverTimestamp()
+          });
+        }
+      }
+
+      // 2. Process Pack & Simple Stock Deductions (Independent stock per variant/product)
+      const parentDeductions = new Map();
+
+      for (const update of stockUpdates) {
+        if (update.isBulk) continue;
+        if (update.isVariant) {
+          // Deduct from authoritative variant subcollection document
+          transaction.update(update.varRef, {
+            stockQuantity: update.newStock,
+            inStock: update.newStock > 0,
+            updatedAt: FieldValue.serverTimestamp()
+          });
+
+          // Aggregate parent deduction per productId
+          const agg = parentDeductions.get(update.productId) || {
+            prodRef: update.prodRef,
+            totalDeductQty: 0,
+            currentParentStock: update.parentTotalStock,
+            isVariantProduct: true
+          };
+          agg.totalDeductQty += update.deductQty;
+          parentDeductions.set(update.productId, agg);
+
+          const movementRef = shopRef.collection('stock_movements').doc();
+          transaction.set(movementRef, {
+            id: movementRef.id,
+            shopId: shopId.trim(),
+            productId: update.productId,
+            variantId: update.variantId,
+            variantTitle: update.variantTitle,
+            sku: update.sku,
+            productName: update.productName,
+            stockType: 'pack',
+            changeAmount: -update.deductQty,
+            previousStock: update.currentStock,
+            newStock: update.newStock,
+            movementType: 'order_deduction',
+            orderId: orderRef.id,
+            orderNumber: orderNumber,
+            reason: `Customer order #${orderNumber} placed`,
+            actorUid: callerUid,
+            actorRole: 'customer',
+            createdAt: FieldValue.serverTimestamp()
+          });
+        } else {
+          // Simple Product Deduction: aggregate per productId
+          const agg = parentDeductions.get(update.productId) || {
+            prodRef: update.prodRef,
+            totalDeductQty: 0,
+            currentParentStock: update.currentStock,
+            isVariantProduct: false
+          };
+          agg.totalDeductQty += update.deductQty;
+          parentDeductions.set(update.productId, agg);
+
+          const movementRef = shopRef.collection('stock_movements').doc();
+          transaction.set(movementRef, {
+            id: movementRef.id,
+            shopId: shopId.trim(),
+            productId: update.productId,
+            productName: update.productName,
+            stockType: 'simple',
+            changeAmount: -update.deductQty,
+            previousStock: update.currentStock,
+            newStock: update.newStock,
+            movementType: 'order_deduction',
+            orderId: orderRef.id,
+            orderNumber: orderNumber,
+            reason: `Customer order #${orderNumber} placed`,
+            actorUid: callerUid,
+            actorRole: 'customer',
+            createdAt: FieldValue.serverTimestamp()
+          });
+        }
+      }
+
+      // Update each parent product EXACTLY ONCE per order with accurate inStock synchronization
+      for (const [_, agg] of parentDeductions.entries()) {
+        const remainingStock = Math.max(0, agg.currentParentStock - agg.totalDeductQty);
+        if (agg.isVariantProduct) {
+          transaction.update(agg.prodRef, {
+            totalStockQuantity: FieldValue.increment(-agg.totalDeductQty),
+            inStock: remainingStock > 0,
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        } else {
+          transaction.update(agg.prodRef, {
+            stockQuantity: remainingStock,
+            inStock: remainingStock > 0,
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        }
+      }
+
+      // Record Order (Multi-Vendor Professional Order Identification)
       const newOrderData = {
         id: orderRef.id,
-        orderNumber: orderNumber,
+        orderNumber: platformOrderNumber,
+        sellerOrderNumber: sellerOrderNumber,
+        channelId: channelId,
+        sellerToken: sellerToken,
+        invoiceNumber: invoiceNumber,
+        shopCode: assignedShopCode,
         customerId: callerUid,
         customerName: deliveryAddress?.customerName || request.auth.token?.name || 'Customer',
         customerPhone: deliveryAddress?.contactPhone || request.auth.token?.phone_number || '',
         shopId: shopId.trim(),
+        ownerUid: currentShop.ownerUid || currentShop.id || shopId.trim(),
         shopName: String(currentShop.shopName || currentShop.businessName || 'Professional Seller'),
         shopPhone: String(currentShop.phone || currentShop.contactPhone || ''),
         items: verifiedOrderItems,
@@ -4591,26 +5471,81 @@ exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
         ],
         stockRestored: false,
         idempotencyKey: idempotencyKey ? String(idempotencyKey).trim() : null,
+        payloadFingerprint: payloadFingerprint,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp()
       };
 
       transaction.set(orderRef, newOrderData);
 
-      // Increment shop orders counter
-      transaction.update(shopRef, {
+      // Atomic Update: Increment Platform Orders Sequence Counter
+      transaction.set(counterRef, {
+        lastOrderNumber: nextPlatformSeq,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      // Atomic Update: Reserve Permanent shopCode if Newly Allocated
+      if (shopCodeReservationRef) {
+        transaction.set(shopCodeReservationRef, {
+          shopId: shopId.trim(),
+          shopCode: assignedShopCode,
+          createdAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+
+      // Record Atomic Idempotency Reservation
+      if (reservationRef) {
+        transaction.set(reservationRef, {
+          id: reservationDocId,
+          customerId: callerUid,
+          idempotencyKey: idempotencyKey.trim(),
+          shopId: shopId.trim(),
+          payloadFingerprint: payloadFingerprint,
+          orderId: orderRef.id,
+          orderNumber: platformOrderNumber,
+          sellerOrderNumber: sellerOrderNumber,
+          channelId: channelId,
+          totalAmount: totalAmount,
+          status: 'completed',
+          createdAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      // Increment shop orders and seller sequence counter
+      const shopUpdatePayload = {
+        sellerOrderCounter: currentSellerSeq,
         totalOrders: FieldValue.increment(1),
         updatedAt: FieldValue.serverTimestamp()
-      });
+      };
+      if (!currentShop.shopCode) {
+        shopUpdatePayload.shopCode = assignedShopCode;
+      }
+      transaction.update(shopRef, shopUpdatePayload);
 
       return {
         orderId: orderRef.id,
-        orderNumber: orderNumber,
+        orderNumber: platformOrderNumber,
+        sellerOrderNumber: sellerOrderNumber,
+        channelId: channelId,
         totalAmount: totalAmount,
         subtotal: subtotal,
-        deliveryFee: deliveryFee
+        deliveryFee: deliveryFee,
+        isDuplicate: false
       };
     });
+
+    if (result.isDuplicate) {
+      return {
+        success: true,
+        orderId: result.orderId,
+        orderNumber: result.orderNumber,
+        sellerOrderNumber: result.sellerOrderNumber || null,
+        channelId: result.channelId || 'JAMUI_SERVICES',
+        totalAmount: result.totalAmount,
+        isDuplicate: true,
+        message: 'Order already placed.'
+      };
+    }
 
     // 6. Non-blocking Shopkeeper Notification (FCM failure must never cancel the order)
     try {
@@ -4647,6 +5582,8 @@ exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
       success: true,
       orderId: result.orderId,
       orderNumber: result.orderNumber,
+      sellerOrderNumber: result.sellerOrderNumber,
+      channelId: result.channelId,
       totalAmount: result.totalAmount,
       subtotal: result.subtotal,
       deliveryFee: result.deliveryFee,
@@ -4669,7 +5606,7 @@ exports.placeDiamondOrder = onCall({ cors: true }, async (request) => {
  * - Performs atomic stock restoration on rejection or cancellation (strictly once).
  * - Non-blocking customer FCM notification.
  */
-exports.updateDiamondOrderStatus = onCall({ cors: true }, async (request) => {
+exports.updateDiamondOrderStatus = onCall({ cors: true, invoker: 'public' }, async (request) => {
   try {
     if (!request.auth || !request.auth.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
@@ -4700,7 +5637,7 @@ exports.updateDiamondOrderStatus = onCall({ cors: true }, async (request) => {
     let isAuthorized = false;
     let callerRole = 'shopkeeper';
 
-    if (order.shopId === callerUid) {
+    if (order.shopId === callerUid || order.ownerUid === callerUid) {
       isAuthorized = true;
       callerRole = 'shopkeeper';
     } else if (order.customerId === callerUid && newStatus === 'cancelled') {
@@ -4711,13 +5648,24 @@ exports.updateDiamondOrderStatus = onCall({ cors: true }, async (request) => {
       isAuthorized = true;
       callerRole = 'customer';
     } else {
-      // Check admin privileges
+      // Check if caller owns the shop document
       try {
-        await verifyActiveAdmin(request);
-        isAuthorized = true;
-        callerRole = 'admin';
-      } catch (_) {
-        throw new HttpsError('permission-denied', 'You do not have permission to update this order.');
+        const sSnap = await db.collection('diamond_shops').doc(order.shopId).get();
+        if (sSnap.exists && (sSnap.data()?.ownerUid === callerUid || sSnap.id === callerUid)) {
+          isAuthorized = true;
+          callerRole = 'shopkeeper';
+        }
+      } catch (_) {}
+
+      if (!isAuthorized) {
+        // Check admin privileges
+        try {
+          await verifyActiveAdmin(request);
+          isAuthorized = true;
+          callerRole = 'admin';
+        } catch (_) {
+          throw new HttpsError('permission-denied', 'You do not have permission to update this order.');
+        }
       }
     }
 
@@ -4754,14 +5702,167 @@ exports.updateDiamondOrderStatus = onCall({ cors: true }, async (request) => {
       if (needsStockRestoration && tOrder.stockRestored !== true) {
         const shopRef = db.collection('diamond_shops').doc(order.shopId);
         if (Array.isArray(tOrder.items)) {
+          // 1. Group restoration data
+          const parentRestorations = new Map(); // key: productId -> { prodRef, totalRestoreQty, isVariant, items: [] }
+          const bulkRestorations = new Map();   // key: productId -> { prodRef, totalBaseToRestore, productName, items: [] }
+          const variantRestorations = [];       // array of { varRef, cleanVariantId, quantity, item }
+
           for (const item of tOrder.items) {
             if (item.productId && item.quantity > 0) {
               const prodRef = shopRef.collection('products').doc(item.productId);
-              transaction.update(prodRef, {
-                stockQuantity: FieldValue.increment(item.quantity),
+              
+              if (item.stockType === 'bulk') {
+                // Bulk Product Restoration: restore integer base units
+                const baseToRestore = Number(item.totalBaseUnits) || ((Number(item.baseUnitsPerOption) || 1000) * item.quantity);
+                const cur = bulkRestorations.get(item.productId) || { prodRef, totalBaseToRestore: 0, productName: item.name || '', items: [] };
+                cur.totalBaseToRestore += baseToRestore;
+                cur.items.push({ item, baseToRestore });
+                bulkRestorations.set(item.productId, cur);
+              } else if (item.variantId && typeof item.variantId === 'string' && item.variantId.trim().length > 0) {
+                // Pack Variant Restoration
+                const cleanVariantId = item.variantId.trim();
+                const varRef = prodRef.collection('variants').doc(cleanVariantId);
+                variantRestorations.push({ varRef, cleanVariantId, quantity: item.quantity, item });
+
+                // Aggregate for parent update
+                const cur = parentRestorations.get(item.productId) || { prodRef, totalRestoreQty: 0, isVariant: true, items: [] };
+                cur.totalRestoreQty += item.quantity;
+                cur.items.push(item);
+                parentRestorations.set(item.productId, cur);
+              } else {
+                // Simple Product Restoration (100% Backwards Compatible)
+                const cur = parentRestorations.get(item.productId) || { prodRef, totalRestoreQty: 0, isVariant: false, items: [] };
+                cur.totalRestoreQty += item.quantity;
+                cur.items.push(item);
+                parentRestorations.set(item.productId, cur);
+              }
+            }
+          }
+
+          // 2. ALL READS FIRST (Strict Firestore transaction compliance)
+          const bulkProdDocs = new Map();
+          for (const [prodId, bRest] of bulkRestorations.entries()) {
+            const pDoc = await transaction.get(bRest.prodRef);
+            if (pDoc.exists) {
+              bulkProdDocs.set(prodId, pDoc.data() || {});
+            }
+          }
+
+          const variantDocs = new Map();
+          for (const vRest of variantRestorations) {
+            const vDoc = await transaction.get(vRest.varRef);
+            if (vDoc.exists) {
+              variantDocs.set(vRest.cleanVariantId, vDoc.data() || {});
+            }
+          }
+
+          // 3. ALL WRITES SECOND
+          // A. Restore bulk parent products (updating both baseStockQuantity and authoritative stockQuantity)
+          for (const [prodId, bRest] of bulkRestorations.entries()) {
+            const pData = bulkProdDocs.get(prodId) || {};
+            const curBase = Number(pData.baseStockQuantity !== undefined ? pData.baseStockQuantity : (Number(pData.stockQuantity || 0) * 1000));
+            const newBase = curBase + bRest.totalBaseToRestore;
+            const u = String(pData.unit || '').toLowerCase().trim();
+            const mult = (u === 'kg' || u === 'kilogram' || u === 'kgs' || u === 'l' || u === 'liter' || u === 'litre' || u === 'ltr') ? 1000 : 1;
+            const newStockQty = mult === 1000 ? Number((newBase / 1000).toFixed(3)) : newBase;
+
+            transaction.update(bRest.prodRef, {
+              baseStockQuantity: newBase,
+              stockQuantity: newStockQty,
+              inStock: newBase > 0,
+              updatedAt: FieldValue.serverTimestamp()
+            });
+
+            for (const bItem of bRest.items) {
+              const movementRef = shopRef.collection('stock_movements').doc();
+              transaction.set(movementRef, {
+                id: movementRef.id,
+                shopId: order.shopId,
+                productId: prodId,
+                variantId: bItem.item.variantId || null,
+                variantTitle: bItem.item.variantTitle || '',
+                productName: bItem.item.name || '',
+                stockType: 'bulk',
+                changeAmount: bItem.item.quantity,
+                baseUnitsRestored: bItem.baseToRestore,
+                previousBaseStock: curBase,
+                newBaseStock: newBase,
+                movementType: 'order_restoration',
+                orderId: orderId,
+                orderNumber: tOrder.orderNumber || '',
+                reason: `Order #${tOrder.orderNumber || orderId} ${newStatus}: bulk stock restored (${bItem.baseToRestore} base units)`,
+                actorUid: callerUid,
+                actorRole: callerRole,
+                createdAt: FieldValue.serverTimestamp()
+              });
+            }
+          }
+
+          // B. Restore pack variants
+          for (const vRest of variantRestorations) {
+            if (variantDocs.has(vRest.cleanVariantId)) {
+              transaction.update(vRest.varRef, {
+                stockQuantity: FieldValue.increment(vRest.quantity),
                 inStock: true,
                 updatedAt: FieldValue.serverTimestamp()
               });
+            } else {
+              logger.warn(`[updateDiamondOrderStatus] Variant ${vRest.cleanVariantId} not found during restoration.`);
+            }
+
+            const movementRef = shopRef.collection('stock_movements').doc();
+            transaction.set(movementRef, {
+              id: movementRef.id,
+              shopId: order.shopId,
+              productId: vRest.item.productId,
+              variantId: vRest.cleanVariantId,
+              variantTitle: vRest.item.variantTitle || '',
+              sku: vRest.item.sku || '',
+              productName: vRest.item.name || '',
+              changeAmount: vRest.quantity,
+              movementType: 'order_restoration',
+              orderId: orderId,
+              orderNumber: tOrder.orderNumber || '',
+              reason: `Order #${tOrder.orderNumber || orderId} ${newStatus}: variant stock restored`,
+              actorUid: callerUid,
+              actorRole: callerRole,
+              createdAt: FieldValue.serverTimestamp()
+            });
+          }
+
+          // C. Restore pack/simple parent products
+          for (const [prodId, rest] of parentRestorations.entries()) {
+            if (rest.isVariant) {
+              transaction.update(rest.prodRef, {
+                totalStockQuantity: FieldValue.increment(rest.totalRestoreQty),
+                inStock: true,
+                updatedAt: FieldValue.serverTimestamp()
+              });
+            } else {
+              transaction.update(rest.prodRef, {
+                stockQuantity: FieldValue.increment(rest.totalRestoreQty),
+                inStock: true,
+                updatedAt: FieldValue.serverTimestamp()
+              });
+
+              for (const sItem of rest.items) {
+                const movementRef = shopRef.collection('stock_movements').doc();
+                transaction.set(movementRef, {
+                  id: movementRef.id,
+                  shopId: order.shopId,
+                  productId: prodId,
+                  variantId: null,
+                  productName: sItem.name || '',
+                  changeAmount: sItem.quantity,
+                  movementType: 'order_restoration',
+                  orderId: orderId,
+                  orderNumber: tOrder.orderNumber || '',
+                  reason: `Order #${tOrder.orderNumber || orderId} ${newStatus}: stock restored`,
+                  actorUid: callerUid,
+                  actorRole: callerRole,
+                  createdAt: FieldValue.serverTimestamp()
+                });
+              }
             }
           }
         }
@@ -4956,14 +6057,14 @@ exports.adminSuspendDiamondShop = onCall({ cors: true }, async (request) => {
  * - Atomic Firestore Transaction used to prevent concurrency race with customer orders.
  * - Immutable Audit Log recorded in audit_logs collection.
  */
-exports.adjustDiamondProductStock = onCall({ cors: true }, async (request) => {
+exports.adjustDiamondProductStock = onCall({ cors: true, invoker: 'public' }, async (request) => {
   try {
     if (!request.auth || !request.auth.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
 
     const callerUid = request.auth.uid;
-    const { shopId, productId, operation, amount, reason = '' } = request.data || {};
+    const { shopId, productId, variantId = null, operation, amount, reason = '' } = request.data || {};
 
     // 1. Parameter Validation
     if (!shopId || typeof shopId !== 'string') {
@@ -4978,9 +6079,14 @@ exports.adjustDiamondProductStock = onCall({ cors: true }, async (request) => {
       throw new HttpsError('invalid-argument', `Invalid operation '${operation}'. Allowed operations: ${allowedOperations.join(', ')}.`);
     }
 
-    const parsedAmount = parseInt(amount, 10);
-    if (isNaN(parsedAmount) || parsedAmount < 0 || (operation !== 'set' && parsedAmount <= 0)) {
-      throw new HttpsError('invalid-argument', 'Amount must be a valid positive integer (or non-negative for set).');
+    const numAmount = Number(amount);
+    if (!Number.isFinite(numAmount) || isNaN(numAmount) || numAmount < 0 || (operation !== 'set' && numAmount <= 0)) {
+      throw new HttpsError('invalid-argument', 'Amount must be a valid positive number (or non-negative for set).');
+    }
+
+    const decimalParts = String(amount).split('.');
+    if (decimalParts.length > 1 && decimalParts[1].length > 3) {
+      throw new HttpsError('invalid-argument', 'Amount cannot exceed 3 decimal places (maximum precision is 1 gram or 1 ml).');
     }
 
     // 2. Authoritative Caller Role & Ownership Verification
@@ -5024,7 +6130,99 @@ exports.adjustDiamondProductStock = onCall({ cors: true }, async (request) => {
       }
 
       const prodData = prodDoc.data() || {};
-      const currentStock = Number(prodData.stockQuantity || 0);
+
+      // Case 1: Bulk Inventory adjustment (Shared integer base units)
+      if (prodData.stockType === 'bulk') {
+        const currentBase = Number(prodData.baseStockQuantity !== undefined ? prodData.baseStockQuantity : (Number(prodData.stockQuantity || 0) * 1000));
+        const isBase = request.data.isBaseUnit === true || request.data.unit === 'g' || request.data.unit === 'ml';
+        const mult = isBase ? 1 : 1000;
+        const deltaBase = Math.round(numAmount * mult);
+        if (deltaBase <= 0 && operation !== 'set') {
+          throw new HttpsError('invalid-argument', 'Quantity is too small to adjust (less than 1 base unit).');
+        }
+        let newBase = 0;
+
+        if (operation === 'set') {
+          newBase = deltaBase;
+        } else if (operation === 'increment') {
+          newBase = currentBase + deltaBase;
+        } else if (operation === 'decrement') {
+          if (currentBase < deltaBase) {
+            throw new HttpsError(
+              'failed-precondition',
+              `Cannot decrement bulk stock by ${deltaBase} base units. Current base stock is only ${currentBase}. Negative stock is not allowed.`
+            );
+          }
+          newBase = currentBase - deltaBase;
+        }
+
+        const u = String(prodData.unit || '').toLowerCase().trim();
+        const pMult = (u === 'kg' || u === 'kilogram' || u === 'kgs' || u === 'l' || u === 'liter' || u === 'litre' || u === 'ltr') ? 1000 : 1;
+        const newStockQty = pMult === 1000 ? Number((newBase / 1000).toFixed(3)) : newBase;
+
+        transaction.update(prodRef, {
+          baseStockQuantity: newBase,
+          stockQuantity: newStockQty,
+          inStock: newBase > 0,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+
+        const movementRef = shopRef.collection('stock_movements').doc();
+        transaction.set(movementRef, {
+          id: movementRef.id,
+          shopId: cleanShopId,
+          productId: cleanProductId,
+          productName: String(prodData.titleEnglish || prodData.name || 'Product'),
+          stockType: 'bulk',
+          changeAmount: deltaBase,
+          previousBaseStock: currentBase,
+          newBaseStock: newBase,
+          movementType: 'manual_adjustment',
+          operation,
+          reason: reason || `Manual bulk inventory adjustment (${operation} ${numAmount})`,
+          actorUid: callerUid,
+          actorRole: isCallerAdmin ? 'admin' : 'shopkeeper',
+          createdAt: FieldValue.serverTimestamp()
+        });
+
+        return {
+          productId: cleanProductId,
+          stockType: 'bulk',
+          previousBaseStock: currentBase,
+          newBaseStock: newBase,
+          newStock: newStockQty,
+          inStock: newBase > 0
+        };
+      }
+
+      // Case 2: Pack Stock or Simple Product adjustment
+      if (!Number.isInteger(numAmount)) {
+        throw new HttpsError('invalid-argument', 'Pack and piece items must have whole integer quantities.');
+      }
+      const parsedAmount = Math.round(numAmount);
+      const hasVariants = prodData.hasVariants === true;
+      const cleanVariantId = (variantId && typeof variantId === 'string' && variantId.trim().length > 0)
+        ? variantId.trim()
+        : null;
+
+      if (hasVariants && !cleanVariantId) {
+        throw new HttpsError('invalid-argument', 'Product has variants. Valid variantId is required.');
+      }
+
+      let targetRef = prodRef;
+      let targetData = prodData;
+
+      if (cleanVariantId) {
+        const varRef = prodRef.collection('variants').doc(cleanVariantId);
+        const varDoc = await transaction.get(varRef);
+        if (!varDoc.exists) {
+          throw new HttpsError('not-found', `Variant with ID ${cleanVariantId} not found in this product.`);
+        }
+        targetRef = varRef;
+        targetData = varDoc.data() || {};
+      }
+
+      const currentStock = Number(targetData.stockQuantity || 0);
       let newStock = 0;
 
       if (operation === 'set') {
@@ -5045,20 +6243,53 @@ exports.adjustDiamondProductStock = onCall({ cors: true }, async (request) => {
         throw new HttpsError('failed-precondition', 'Resulting stock cannot be negative.');
       }
 
-      // Update product stock and availability flag
-      transaction.update(prodRef, {
+      const stockDelta = newStock - currentStock;
+
+      // Update target stock and availability flag
+      transaction.update(targetRef, {
         stockQuantity: newStock,
         inStock: newStock > 0,
         updatedAt: FieldValue.serverTimestamp()
       });
 
+      // If adjusting a variant, also update parent product totalStockQuantity aggregate
+      if (cleanVariantId) {
+        transaction.update(prodRef, {
+          totalStockQuantity: FieldValue.increment(stockDelta),
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      // Write vendor stock movement record (vendor accessible ledger)
+      const movementRef = shopRef.collection('stock_movements').doc();
+      const movementPayload = {
+        id: movementRef.id,
+        shopId: cleanShopId,
+        productId: cleanProductId,
+        productName: String(targetData.title || prodData.titleEnglish || prodData.name || 'Product'),
+        changeAmount: stockDelta,
+        previousStock: currentStock,
+        newStock: newStock,
+        movementType: operation === 'set' ? 'manual_set' : (operation === 'increment' ? 'manual_inward' : 'manual_outward'),
+        reason: typeof reason === 'string' && reason.trim().length > 0 ? reason.trim().slice(0, 500) : `Manual adjustment (${operation} ${parsedAmount})`,
+        actorUid: callerUid,
+        actorRole: isCallerAdmin ? 'admin' : 'shopkeeper',
+        createdAt: FieldValue.serverTimestamp()
+      };
+      if (cleanVariantId) {
+        movementPayload.variantId = cleanVariantId;
+        movementPayload.variantTitle = String(targetData.title || '');
+        movementPayload.sku = String(targetData.sku || '');
+      }
+      transaction.set(movementRef, movementPayload);
+
       // Write immutable audit log
       const auditRef = db.collection('audit_logs').doc();
-      transaction.set(auditRef, {
+      const auditPayload = {
         action: 'DIAMOND_STOCK_ADJUSTMENT',
         shopId: cleanShopId,
         productId: cleanProductId,
-        productName: prodData.name || '',
+        productName: targetData.title || prodData.name || '',
         operation: operation,
         amount: parsedAmount,
         previousStock: currentStock,
@@ -5067,21 +6298,28 @@ exports.adjustDiamondProductStock = onCall({ cors: true }, async (request) => {
         callerRole: isCallerAdmin ? 'admin' : 'shopkeeper',
         reason: typeof reason === 'string' ? reason.trim().slice(0, 500) : '',
         createdAt: FieldValue.serverTimestamp()
-      });
+      };
+      if (cleanVariantId) {
+        auditPayload.variantId = cleanVariantId;
+        auditPayload.sku = String(targetData.sku || '');
+      }
+      transaction.set(auditRef, auditPayload);
 
       return {
         previousStock: currentStock,
         newStock,
-        inStock: newStock > 0
+        inStock: newStock > 0,
+        variantId: cleanVariantId
       };
     });
 
-    logger.info(`[adjustDiamondProductStock] Stock for ${cleanProductId} adjusted (${operation} ${parsedAmount}) by ${callerUid}. New stock: ${result.newStock}`);
+    logger.info(`[adjustDiamondProductStock] Stock for ${cleanProductId}${result.variantId ? ` (${result.variantId})` : ''} adjusted (${operation} ${parsedAmount}) by ${callerUid}. New stock: ${result.newStock}`);
 
     return {
       success: true,
       shopId: cleanShopId,
       productId: cleanProductId,
+      variantId: result.variantId,
       operation: operation,
       amount: parsedAmount,
       previousStock: result.previousStock,
@@ -5098,6 +6336,141 @@ exports.adjustDiamondProductStock = onCall({ cors: true }, async (request) => {
   }
 });
 
+/**
+ * Cloud Function: reconcileDiamondProductAggregates
+ * Server-authoritative aggregate reconciliation for Professional Products with variants.
+ * Recalculates totalStockQuantity, inStock, variantCount, minPrice, and maxPrice from active variants.
+ */
+exports.reconcileDiamondProductAggregates = onCall({ cors: true }, async (request) => {
+  try {
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required.');
+    }
+
+    const callerUid = request.auth.uid;
+    const { shopId, productId } = request.data || {};
+
+    if (!shopId || typeof shopId !== 'string') {
+      throw new HttpsError('invalid-argument', 'Valid shop ID is required.');
+    }
+    if (!productId || typeof productId !== 'string') {
+      throw new HttpsError('invalid-argument', 'Valid product ID is required.');
+    }
+
+    const cleanShopId = shopId.trim();
+    const cleanProductId = productId.trim();
+    const shopRef = db.collection('diamond_shops').doc(cleanShopId);
+    const shopDoc = await shopRef.get();
+
+    if (!shopDoc.exists) {
+      throw new HttpsError('not-found', 'Shop not found.');
+    }
+
+    const shopData = shopDoc.data() || {};
+    let isCallerAdmin = false;
+    try {
+      await verifyActiveAdmin(request);
+      isCallerAdmin = true;
+    } catch (_) {
+      isCallerAdmin = false;
+    }
+
+    const isShopOwner = (shopData.ownerUid === callerUid || cleanShopId === callerUid);
+    if (!isCallerAdmin && !isShopOwner) {
+      throw new HttpsError('permission-denied', 'You do not have permission to reconcile products for this shop.');
+    }
+
+    const prodRef = shopRef.collection('products').doc(cleanProductId);
+
+    // Concurrency-safe atomic reconciliation transaction
+    const result = await db.runTransaction(async (transaction) => {
+      const prodDoc = await transaction.get(prodRef);
+      if (!prodDoc.exists) {
+        throw new HttpsError('not-found', 'Product not found.');
+      }
+
+      const prodData = prodDoc.data() || {};
+      if (prodData.hasVariants !== true) {
+        return {
+          hasVariants: false,
+          message: 'Product does not have variants. No reconciliation needed.'
+        };
+      }
+
+      const basePrice = Number(prodData.sellingPrice !== undefined ? prodData.sellingPrice : (prodData.price || 0));
+      const variantsSnap = await prodRef.collection('variants').get();
+
+      let totalStock = 0;
+      let activeVariantCount = 0;
+      let minPrice = null;
+      let maxPrice = null;
+
+      for (const vDoc of variantsSnap.docs) {
+        const v = vDoc.data();
+        if (v.isActive !== false) {
+          activeVariantCount++;
+          const vStock = Number(v.stockQuantity || 0);
+          totalStock += vStock;
+
+          let effectivePrice = basePrice;
+          if (v.priceMode === 'override' && v.price !== undefined && v.price !== null) {
+            effectivePrice = Number(v.price);
+          }
+
+          if (minPrice === null || effectivePrice < minPrice) minPrice = effectivePrice;
+          if (maxPrice === null || effectivePrice > maxPrice) maxPrice = effectivePrice;
+        }
+      }
+
+      const reconciliationPayload = {
+        totalStockQuantity: totalStock,
+        inStock: totalStock > 0,
+        variantCount: activeVariantCount,
+        minPrice: minPrice !== null ? minPrice : basePrice,
+        maxPrice: maxPrice !== null ? maxPrice : basePrice,
+        aggregatesReconciledAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      };
+
+      transaction.update(prodRef, reconciliationPayload);
+
+      return {
+        hasVariants: true,
+        aggregates: {
+          totalStockQuantity: totalStock,
+          inStock: totalStock > 0,
+          variantCount: activeVariantCount,
+          minPrice: minPrice !== null ? minPrice : basePrice,
+          maxPrice: maxPrice !== null ? maxPrice : basePrice
+        }
+      };
+    });
+
+    if (!result.hasVariants) {
+      return {
+        success: true,
+        message: result.message,
+        hasVariants: false
+      };
+    }
+
+    logger.info(`[reconcileDiamondProductAggregates] Product ${cleanProductId} reconciled: totalStock=${result.aggregates.totalStockQuantity}, activeVariants=${result.aggregates.variantCount}`);
+
+    return {
+      success: true,
+      shopId: cleanShopId,
+      productId: cleanProductId,
+      aggregates: result.aggregates
+    };
+  } catch (err) {
+    if (err.code && ['unauthenticated', 'permission-denied', 'invalid-argument', 'not-found'].includes(err.code)) {
+      throw new HttpsError(err.code, err.message);
+    }
+    logger.error('[reconcileDiamondProductAggregates] Unexpected error:', err);
+    throw new HttpsError('internal', err.message || 'Failed to reconcile product aggregates.');
+  }
+});
+
 // =============================================================================
 // PROFESSIONAL SELLER SUBSCRIPTION & RAZORPAY PAYMENT FUNCTIONS
 // =============================================================================
@@ -5109,7 +6482,7 @@ exports.adjustDiamondProductStock = onCall({ cors: true }, async (request) => {
  * - Pricing & duration originate exclusively from diamond_subscription_plans.
  * - Stores pending payment record in diamond_payments/{orderId}.
  */
-exports.createProfessionalSubscriptionOrder = onCall({ cors: true, secrets: RAZORPAY_SECRETS }, async (request) => {
+exports.createProfessionalSubscriptionOrder = onCall({ cors: true, secrets: ['RAZORPAY_KEY_ID','RAZORPAY_KEY_SECRET'] }, async (request) => {
   try {
     if (!request.auth || !request.auth.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
@@ -5149,7 +6522,56 @@ exports.createProfessionalSubscriptionOrder = onCall({ cors: true, secrets: RAZO
       throw new HttpsError('permission-denied', 'You do not have permission to purchase a subscription for this shop.');
     }
 
-    // 2. Verify Subscription Plan Server-Authoritatively
+    // 2. Authoritative Seller Approval & Account Status Enforcement
+    // Strictly rejects pending, rejected, suspended, blocked, and inactive shops.
+    if (shopData.isDeleted === true) {
+      logger.warn(`[createProfessionalSubscriptionOrder] Shop ${cleanShopId} is marked as deleted.`);
+      throw new HttpsError('not-found', 'Shop has been deleted.');
+    }
+
+    const rawStatus = (shopData.status || '').toLowerCase().trim();
+    if (rawStatus === 'suspended') {
+      logger.warn(`[createProfessionalSubscriptionOrder] Shop ${cleanShopId} is suspended.`);
+      throw new HttpsError('failed-precondition', 'Shop account is suspended. Subscription purchase is not permitted.');
+    }
+
+    if (rawStatus === 'blocked') {
+      logger.warn(`[createProfessionalSubscriptionOrder] Shop ${cleanShopId} is blocked.`);
+      throw new HttpsError('permission-denied', 'Shop account is blocked. Subscription purchase is not permitted.');
+    }
+
+    if (rawStatus === 'rejected') {
+      logger.warn(`[createProfessionalSubscriptionOrder] Shop ${cleanShopId} registration was rejected.`);
+      throw new HttpsError('failed-precondition', 'Shop registration has been rejected by administration.');
+    }
+
+    // Strict Anti-Tampering & Conflict Resolution:
+    // If isApproved is explicitly false, or status is explicitly unapproved, strictly reject.
+    // Legacy support: Allows isApproved to be undefined if rawStatus === 'approved',
+    // or rawStatus to be undefined if isApproved === true, but NEVER when they conflict.
+    if (shopData.isApproved === false) {
+      logger.warn(`[createProfessionalSubscriptionOrder] Shop ${cleanShopId} is explicitly unapproved (isApproved: false, status: '${shopData.status}').`);
+      throw new HttpsError('failed-precondition', 'Shop registration is not approved. Subscription purchase is not permitted.');
+    }
+
+    const unapprovedStatuses = ['pending', 'pending_review', 'draft', 'rejected', 'suspended', 'blocked'];
+    if (unapprovedStatuses.includes(rawStatus)) {
+      logger.warn(`[createProfessionalSubscriptionOrder] Shop ${cleanShopId} status is '${rawStatus}'.`);
+      throw new HttpsError('failed-precondition', `Shop registration is in '${rawStatus}' status. Subscription purchase is not permitted.`);
+    }
+
+    const hasApprovalEvidence = shopData.isApproved === true || rawStatus === 'approved';
+    if (!hasApprovalEvidence) {
+      logger.warn(`[createProfessionalSubscriptionOrder] Shop ${cleanShopId} lacks approval evidence (status: '${shopData.status}', isApproved: ${shopData.isApproved}).`);
+      throw new HttpsError('failed-precondition', 'Shop registration is pending admin approval. You can purchase a subscription once your shop is approved.');
+    }
+
+    if (shopData.isActive === false) {
+      logger.warn(`[createProfessionalSubscriptionOrder] Shop ${cleanShopId} is inactive.`);
+      throw new HttpsError('failed-precondition', 'Shop account is currently inactive.');
+    }
+
+    // 3. Verify Subscription Plan Server-Authoritatively
     const planRef = db.collection('diamond_subscription_plans').doc(cleanPlanId);
     const planDoc = await planRef.get();
     if (!planDoc.exists) {
@@ -5225,9 +6647,16 @@ exports.createProfessionalSubscriptionOrder = onCall({ cors: true, secrets: RAZO
       currency: 'INR',
       status: 'created',
       receipt: rzpOrder.receipt || '',
-      productLimit: Number(planData.productLimit) || 0,
-      imageLimit: Number(planData.imageLimit) || 0,
-      storageLimitMb: Number(planData.storageLimitMb) || 0,
+      productLimit: Number(planData.productLimit || planData.maxProducts) || 50,
+      variantLimit: Number(planData.variantLimit || planData.maxVariantsPerProduct) || 5,
+      imageLimit: Number(planData.imageLimit || planData.maxImagesPerMonth) || 100,
+      storageLimitMb: Number(planData.storageLimitMb || planData.storageMb) || 500,
+      features: planData.features || {
+        advancedAnalytics: planData.advancedAnalytics === true,
+        promotionalTools: planData.promotionalTools === true,
+        lowStockAlerts: planData.lowStockAlerts !== false,
+        customAttributes: planData.customAttributes !== false
+      },
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     };
@@ -5264,7 +6693,7 @@ exports.createProfessionalSubscriptionOrder = onCall({ cors: true, secrets: RAZO
  * - Implements strict idempotency.
  * - Sets pending_retry on diamond_payments if database activation fails after live capture.
  */
-exports.verifyProfessionalSubscriptionPayment = onCall({ cors: true, secrets: RAZORPAY_SECRETS }, async (request) => {
+exports.verifyProfessionalSubscriptionPayment = onCall({ cors: true, secrets: ['RAZORPAY_KEY_ID','RAZORPAY_KEY_SECRET'] }, async (request) => {
   try {
     if (!request.auth || !request.auth.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
@@ -5424,6 +6853,38 @@ exports.verifyProfessionalSubscriptionPayment = onCall({ cors: true, secrets: RA
         }
         const currentShopData = txShopDoc.data() || {};
 
+        if (currentShopData.isDeleted === true) {
+          throw new HttpsError('not-found', 'Shop has been deleted.');
+        }
+
+        const rawShopStatus = (currentShopData.status || '').toLowerCase().trim();
+        if (rawShopStatus === 'suspended') {
+          throw new HttpsError('failed-precondition', 'Shop account is suspended. Subscription activation held.');
+        }
+        if (rawShopStatus === 'blocked') {
+          throw new HttpsError('permission-denied', 'Shop account is blocked. Subscription activation held.');
+        }
+        if (rawShopStatus === 'rejected') {
+          throw new HttpsError('failed-precondition', 'Shop registration was rejected. Subscription activation held.');
+        }
+
+        if (currentShopData.isApproved === false) {
+          throw new HttpsError('failed-precondition', 'Shop approval is explicitly false. Subscription activation held.');
+        }
+
+        const unapprovedStatuses = ['pending', 'pending_review', 'draft', 'rejected', 'suspended', 'blocked'];
+        if (unapprovedStatuses.includes(rawShopStatus)) {
+          throw new HttpsError('failed-precondition', `Shop is in '${rawShopStatus}' status. Subscription activation held.`);
+        }
+
+        const hasTxApprovalEvidence = currentShopData.isApproved === true || rawShopStatus === 'approved';
+        if (!hasTxApprovalEvidence) {
+          throw new HttpsError('failed-precondition', 'Shop is not approved. Subscription activation held.');
+        }
+        if (currentShopData.isActive === false) {
+          throw new HttpsError('failed-precondition', 'Shop is inactive. Subscription activation held.');
+        }
+
         const durationDays = Number(orderData.durationDays) || 30;
         const now = new Date();
         const existingExpiryTimestamp = currentShopData.subscriptionExpiry;
@@ -5447,7 +6908,6 @@ exports.verifyProfessionalSubscriptionPayment = onCall({ cors: true, secrets: RA
         transaction.update(paymentRef, {
           status: 'activated',
           paymentId: cleanPaymentId,
-          signature: cleanSignature,
           verifiedAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
           fulfillmentSource: 'client_verification'
@@ -5465,9 +6925,13 @@ exports.verifyProfessionalSubscriptionPayment = onCall({ cors: true, secrets: RA
           paymentId: cleanPaymentId,
           paymentAmount: orderData.amount,
           paymentAmountInPaise: orderData.amountInPaise,
-          productLimit: orderData.productLimit || 0,
-          imageLimit: orderData.imageLimit || 0,
-          storageLimitMb: orderData.storageLimitMb || 0,
+          productLimit: orderData.productLimit || 50,
+          maxProductsLimit: orderData.productLimit || 50,
+          variantLimit: orderData.variantLimit || 5,
+          maxVariantsPerProduct: orderData.variantLimit || 5,
+          imageLimit: orderData.imageLimit || 100,
+          storageLimitMb: orderData.storageLimitMb || 500,
+          features: orderData.features || {},
           updatedAt: FieldValue.serverTimestamp()
         });
 
@@ -5483,7 +6947,6 @@ exports.verifyProfessionalSubscriptionPayment = onCall({ cors: true, secrets: RA
         await paymentRef.set({
           status: 'pending_retry',
           paymentId: cleanPaymentId,
-          signature: cleanSignature,
           lastError: txErr.message || 'Transaction failed',
           updatedAt: FieldValue.serverTimestamp()
         }, { merge: true });
@@ -5635,9 +7098,13 @@ exports.professionalRazorpayWebhook = onRequest({ cors: true, secrets: RAZORPAY_
           paymentId: paymentId || orderData.paymentId || '',
           paymentAmount: orderData.amount,
           paymentAmountInPaise: orderData.amountInPaise,
-          productLimit: orderData.productLimit || 0,
-          imageLimit: orderData.imageLimit || 0,
-          storageLimitMb: orderData.storageLimitMb || 0,
+          productLimit: orderData.productLimit || 50,
+          maxProductsLimit: orderData.productLimit || 50,
+          variantLimit: orderData.variantLimit || 5,
+          maxVariantsPerProduct: orderData.variantLimit || 5,
+          imageLimit: orderData.imageLimit || 100,
+          storageLimitMb: orderData.storageLimitMb || 500,
+          features: orderData.features || {},
           updatedAt: FieldValue.serverTimestamp()
         });
       });
@@ -5659,3 +7126,193 @@ exports.professionalRazorpayWebhook = onRequest({ cors: true, secrets: RAZORPAY_
 
 
 
+
+// ===========================================================================
+// PROFESSIONAL MARKETPLACE — TRUSTED PRODUCT CREATION (SUBSCRIPTION QUOTA)
+// ===========================================================================
+
+const PRO_PRODUCT_ALLOWED_FIELDS = [
+  'titleEnglish', 'title', 'description', 'storeCategoryId', 'storeCategoryName', 'categoryName',
+  'unit', 'unitValue', 'sellingPrice', 'regularPrice', 'discountPercentage', 'thumbnailUrl',
+  'images', 'lowStockThreshold', 'hasVariants', 'minPrice', 'maxPrice', 'attributes',
+  'stockType', 'baseUnit', 'baseStockQuantity', 'baseMultiplier',
+];
+
+/**
+ * Cloud Function: createProfessionalProduct
+ * Trusted, transactional product creation for Professional Sellers.
+ * - Caller must own the shop. Suspended / blocked / deleted shops and shops whose
+ *   subscription has EXPIRED (server time) cannot create products.
+ * - Active product quota (shop.maxProductsLimit) is checked and committed in ONE transaction;
+ *   every creator also writes the shop document so concurrent creations serialize
+ *   (no race can exceed the limit).
+ * - Only whitelisted fields are accepted; stock, ratings, revenue, approval fields are server-owned.
+ * - Plans never limit weight/size/colour/pack options (only a technical abuse cap on variants elsewhere).
+ * - Existing products are never deleted or modified when a plan is downgraded.
+ */
+exports.createProfessionalProduct = onCall({ cors: true, invoker: 'public' }, async (request) => {
+  try {
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required.');
+    }
+    const callerUid = request.auth.uid;
+    const { shopId, productData, costPrice, supplierName, purchaseNotes, initialStock } = request.data || {};
+
+    if (!shopId || typeof shopId !== 'string' || !shopId.trim()) {
+      throw new HttpsError('invalid-argument', 'shopId is required.');
+    }
+    if (!productData || typeof productData !== 'object' || Array.isArray(productData)) {
+      throw new HttpsError('invalid-argument', 'productData is required.');
+    }
+    const cleanShopId = shopId.trim();
+
+    const clean = {};
+    for (const key of PRO_PRODUCT_ALLOWED_FIELDS) {
+      if (productData[key] !== undefined) clean[key] = productData[key];
+    }
+    const titleEn = String(clean.titleEnglish || clean.title || '').trim();
+    if (!titleEn) throw new HttpsError('invalid-argument', 'Product name is required.');
+    const sellingPrice = Number(clean.sellingPrice);
+    if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) {
+      throw new HttpsError('invalid-argument', 'A valid selling price greater than 0 is required.');
+    }
+    const regularPrice = Number(clean.regularPrice);
+    if (Number.isFinite(regularPrice) && regularPrice > 0 && sellingPrice > regularPrice) {
+      throw new HttpsError('invalid-argument', 'Selling price cannot exceed MRP.');
+    }
+    const parsedInitialStock = Number(initialStock);
+    const stockQty = Number.isFinite(parsedInitialStock) ? parsedInitialStock : 0;
+    if (stockQty < 0) throw new HttpsError('invalid-argument', 'Stock cannot be negative.');
+    if (!clean.storeCategoryId || typeof clean.storeCategoryId !== 'string') {
+      throw new HttpsError('invalid-argument', 'A product category is required.');
+    }
+
+    const shopRef = db.collection('diamond_shops').doc(cleanShopId);
+    const productsCol = shopRef.collection('products');
+    const productRef = productsCol.doc();
+
+    const result = await db.runTransaction(async (tx) => {
+      const shopSnap = await tx.get(shopRef);
+      if (!shopSnap.exists) throw new HttpsError('not-found', 'Shop not found.');
+      const shop = shopSnap.data() || {};
+
+      if (callerUid !== cleanShopId && shop.ownerUid !== callerUid) {
+        throw new HttpsError('permission-denied', 'You do not own this shop.');
+      }
+      if (shop.isDeleted === true || shop.status === 'suspended' || shop.status === 'blocked') {
+        throw new HttpsError('failed-precondition', 'This shop is suspended or unavailable.');
+      }
+      const expRaw = shop.subscriptionExpiry;
+      if (expRaw) {
+        const expMs = typeof expRaw.toMillis === 'function' ? expRaw.toMillis() : new Date(expRaw).getTime();
+        if (!Number.isNaN(expMs) && expMs <= Date.now()) {
+          throw new HttpsError('failed-precondition', 'Your subscription has expired. Please renew to add new products.');
+        }
+      }
+
+      const maxProducts = Number(shop.maxProductsLimit ?? shop.productLimit ?? shop.maxProducts ?? 100);
+      const catSnap = await tx.get(shopRef.collection('store_categories').doc(clean.storeCategoryId));
+      if (!catSnap.exists || catSnap.data().isActive === false) {
+        throw new HttpsError('failed-precondition', 'Selected category does not exist or is inactive.');
+      }
+
+      const existing = await tx.get(productsCol.where('isDeleted', '==', false));
+      const activeCount = existing.docs.filter((d) => d.data().isActive !== false).length;
+      if (activeCount >= maxProducts) {
+        throw new HttpsError('resource-exhausted', `Product limit of ${maxProducts} reached for your current plan. Please upgrade your plan.`);
+      }
+
+      const now = FieldValue.serverTimestamp();
+      const isBulk = clean.stockType === 'bulk';
+      let baseStockQty = null;
+      let baseUnit = null;
+      if (isBulk) {
+        baseUnit = String(clean.baseUnit || (clean.unit === 'kg' ? 'g' : (clean.unit === 'l' || clean.unit === 'liter' ? 'ml' : 'g'))).toLowerCase();
+        baseStockQty = Number.isInteger(Number(clean.baseStockQuantity))
+          ? Number(clean.baseStockQuantity)
+          : calculateBaseUnits(clean.unit || baseUnit, stockQty);
+      }
+
+      tx.set(productRef, {
+        ...clean,
+        id: productRef.id,
+        shopId: cleanShopId,
+        stockType: isBulk ? 'bulk' : (clean.stockType || 'pack'),
+        ...(isBulk ? {
+          baseUnit,
+          baseStockQuantity: baseStockQty,
+          stockQuantity: (() => {
+            const u = String(clean.unit || baseUnit || '').toLowerCase().trim();
+            const pMult = (u === 'kg' || u === 'kilogram' || u === 'kgs' || u === 'l' || u === 'liter' || u === 'litre' || u === 'ltr') ? 1000 : 1;
+            return pMult === 1000 ? Number((baseStockQty / 1000).toFixed(3)) : baseStockQty;
+          })(),
+          inStock: baseStockQty > 0
+        } : {
+          stockQuantity: stockQty,
+          inStock: stockQty > 0
+        }),
+        lowStockThreshold: Number.isInteger(Number(clean.lowStockThreshold)) ? Number(clean.lowStockThreshold) : 5,
+        isActive: true,
+        isAvailable: true,
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      if ((isBulk ? (baseStockQty || 0) : stockQty) > 0) {
+        const mvRef = shopRef.collection('stock_movements').doc();
+        tx.set(mvRef, {
+          id: mvRef.id, shopId: cleanShopId, productId: productRef.id, productName: titleEn,
+          stockType: isBulk ? 'bulk' : 'pack',
+          changeAmount: isBulk ? baseStockQty : stockQty,
+          previousStock: 0,
+          newStock: isBulk ? baseStockQty : stockQty,
+          movementType: 'initial', reason: 'Initial stock on creation', actorRole: 'shopkeeper', createdAt: now,
+        });
+      }
+      if (costPrice !== undefined && costPrice !== null && Number(costPrice) >= 0) {
+        const cp = Number(costPrice);
+        tx.set(productRef.collection('private_pricing').doc('cost_data'), {
+          productId: productRef.id, shopId: cleanShopId, costPrice: cp,
+          sellingPrice, regularPrice: Number.isFinite(regularPrice) && regularPrice > 0 ? regularPrice : sellingPrice,
+          profitMarginRupees: sellingPrice > cp ? sellingPrice - cp : 0,
+          profitMarginPercentage: sellingPrice > 0 && sellingPrice > cp ? ((sellingPrice - cp) / sellingPrice) * 100 : 0,
+          ...(supplierName ? { supplierName: String(supplierName) } : {}),
+          ...(purchaseNotes ? { purchaseNotes: String(purchaseNotes) } : {}),
+          updatedAt: now,
+        }, { merge: true });
+      }
+      // Serialization point: every concurrent creator writes the shop doc -> transactions conflict & retry.
+      tx.update(shopRef, { productQuotaCheckedAt: now });
+      return { productId: productRef.id, activeCountBefore: activeCount, maxProducts };
+    });
+
+    return { success: true, ...result };
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    logger.error('[createProfessionalProduct] Unexpected error:', err);
+    throw new HttpsError('internal', err.message || 'Failed to create product.');
+  }
+});
+
+/**
+ * Scheduled: marks EXPIRED Professional Shops (diamond_shops) as isSubscriptionActive=false.
+ * Previously only `providers` were expired by checkSubscriptionExpiry; professional shops were not.
+ * Checkout/product creation already re-check expiry against server time, so this is defence-in-depth
+ * and keeps Firestore listing rules/queries (which filter on the flag) consistent.
+ */
+exports.expireProfessionalShopSubscriptions = onSchedule({
+  schedule: 'every day 00:10',
+  timeZone: 'Asia/Kolkata',
+  region: 'asia-south1',
+}, async () => {
+  const now = admin.firestore.Timestamp.now();
+  const snap = await db.collection('diamond_shops')
+    .where('isSubscriptionActive', '==', true)
+    .where('subscriptionExpiry', '<=', now)
+    .get();
+  if (snap.empty) return;
+  const batch = db.batch();
+  snap.docs.forEach((d) => batch.update(d.ref, { isSubscriptionActive: false, subscriptionExpiredAt: now, updatedAt: now }));
+  await batch.commit();
+  logger.info(`[expireProfessionalShopSubscriptions] Deactivated ${snap.size} expired professional shops.`);
+});

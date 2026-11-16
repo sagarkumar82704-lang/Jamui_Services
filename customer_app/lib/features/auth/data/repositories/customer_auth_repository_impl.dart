@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import '../../domain/entities/customer_entity.dart';
 import '../../domain/repositories/customer_auth_repository.dart';
 import '../datasources/firebase_customer_auth_remote_data_source.dart';
@@ -22,39 +21,6 @@ class CustomerAuthRepositoryImpl implements CustomerAuthRepository {
   @override
   Future<Map<String, dynamic>?> getProviderProfile(String uid) async {
     return await remoteDataSource.getProviderProfile(uid);
-  }
-
-  @override
-  Future<void> sendPhoneOtp({
-    required String phoneNumber,
-    int? resendToken,
-    required void Function(String verificationId, int? resendToken) onCodeSent,
-    required void Function(String errorMessage) onError,
-    required void Function(PhoneAuthCredential credential) onVerificationCompleted,
-  }) async {
-    await remoteDataSource.sendPhoneOtp(
-      phoneNumber: phoneNumber,
-      resendToken: resendToken,
-      onCodeSent: onCodeSent,
-      onError: onError,
-      onVerificationCompleted: onVerificationCompleted,
-    );
-  }
-
-  @override
-  Future<UserCredential> verifyOtpCode({
-    required String verificationId,
-    required String smsCode,
-  }) async {
-    return await remoteDataSource.verifyOtpCode(
-      verificationId: verificationId,
-      smsCode: smsCode,
-    );
-  }
-
-  @override
-  Future<UserCredential> signInWithPhoneCredential(PhoneAuthCredential credential) async {
-    return await remoteDataSource.signInWithPhoneCredential(credential);
   }
 
   @override
@@ -97,33 +63,6 @@ class CustomerAuthRepositoryImpl implements CustomerAuthRepository {
       return await remoteDataSource.getCurrentCustomerProfile();
     }
     return null;
-  }
-
-  @override
-  Future<void> linkEmailToCurrentAccount({
-    required String email,
-    required String password,
-  }) async {
-    await remoteDataSource.linkEmailToCurrentAccount(
-      email: email,
-      password: password,
-    );
-  }
-
-  @override
-  Future<int> migrateOldCustomerData({
-    required String phoneNumber,
-    required String newUid,
-  }) async {
-    return await remoteDataSource.migrateOldCustomerData(
-      phoneNumber: phoneNumber,
-      newUid: newUid,
-    );
-  }
-
-  @override
-  bool isCurrentAccountPhoneOnly() {
-    return remoteDataSource.isCurrentAccountPhoneOnly();
   }
 
   @override

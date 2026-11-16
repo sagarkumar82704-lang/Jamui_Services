@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import '../../../../core/config/app_environment.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/provider_app_launcher_service.dart';
 import '../../../../core/widgets/app_logo.dart';
@@ -37,6 +38,12 @@ class ProviderWebViewScreen extends StatefulWidget {
   final String? initialUrl;
 
   const ProviderWebViewScreen({super.key, this.initialUrl});
+
+  @visibleForTesting
+  static Set<String> get trustedHostsForTesting => _ProviderWebViewScreenState._trustedProviderHosts;
+
+  @visibleForTesting
+  static bool isTrustedUrlForTesting(String? urlStr) => _ProviderWebViewScreenState.isTrustedUrl(urlStr);
 
   @override
   State<ProviderWebViewScreen> createState() => _ProviderWebViewScreenState();
@@ -463,19 +470,41 @@ class _ProviderWebViewScreenState extends State<ProviderWebViewScreen>
     return null;
   }
 
-  static const Set<String> _trustedProviderHosts = {
+  /// Production-only trusted hosts
+  static const Set<String> _productionTrustedHosts = {
     'jamui-provider.web.app',
     'jamui-provider.firebaseapp.com',
   };
 
-  bool _isTrustedProviderUrl(String? urlStr) {
+  /// Staging-only trusted hosts (jamui-services-staging)
+  static const Set<String> _stagingTrustedHosts = {
+    'jamui-services-staging-provider.web.app',
+    'jamui-services-staging-provider.firebaseapp.com',
+  };
+
+  /// Environment-specific trusted hosts resolver.
+  /// Staging strictly trusts ONLY approved staging hosts.
+  /// Production strictly trusts ONLY production hosts.
+  /// Never combines them into one interchangeable global allowlist.
+  static Set<String> get _trustedProviderHosts {
+    switch (AppEnvironmentConfig.current) {
+      case AppEnvironment.staging:
+        return _stagingTrustedHosts;
+      case AppEnvironment.emulator:
+        return const {'10.0.2.2', 'localhost', '127.0.0.1'};
+      case AppEnvironment.production:
+        return _productionTrustedHosts;
+    }
+  }
+
+  static bool isTrustedUrl(String? urlStr) {
     if (urlStr == null || urlStr.isEmpty) return false;
     final uri = Uri.tryParse(urlStr);
     if (uri == null) return false;
-    return _isTrustedOriginUri(uri);
+    return isTrustedOriginUri(uri);
   }
 
-  bool _isTrustedOriginUri(Uri uri) {
+  static bool isTrustedOriginUri(Uri uri) {
     final scheme = uri.scheme.toLowerCase();
     final host = uri.host.toLowerCase();
 
@@ -489,6 +518,10 @@ class _ProviderWebViewScreenState extends State<ProviderWebViewScreen>
 
     return false;
   }
+
+  bool _isTrustedProviderUrl(String? urlStr) => isTrustedUrl(urlStr);
+
+  bool _isTrustedOriginUri(Uri uri) => isTrustedOriginUri(uri);
 
   void _handleHostMessage(String message) async {
     final trimmed = message.trim();

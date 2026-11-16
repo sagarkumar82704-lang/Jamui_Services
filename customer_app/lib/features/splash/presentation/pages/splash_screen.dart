@@ -134,7 +134,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     CustomerLocationEntity? cachedLoc;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final jsonStr = prefs.getString('cached_customer_location_v2');
+      final jsonStr = prefs.getString('cached_customer_location_v3') ??
+          prefs.getString('cached_customer_location_v2');
       if (jsonStr != null && jsonStr.isNotEmpty) {
         final map = jsonDecode(jsonStr) as Map<String, dynamic>;
         cachedLoc = CustomerLocationEntity.fromMap(map);
@@ -147,6 +148,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
               customerLatitude: cachedLoc.latitude,
               customerLongitude: cachedLoc.longitude,
               customerAreaName: cachedLoc.placeName,
+              customerVillage: cachedLoc.village,
+              customerBlock: cachedLoc.block,
             ));
       } else {
         context.read<DiscoveryBloc>().add(const LoadDiscoveryDataEvent());

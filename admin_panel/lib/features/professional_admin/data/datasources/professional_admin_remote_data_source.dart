@@ -15,31 +15,29 @@ class ProfessionalAdminRemoteDataSource {
 
   // --- KPI Metrics ---
   Future<Map<String, dynamic>> fetchDashboardMetrics() async {
-    try {
-      final shopsSnap = await _firestore.collection(collectionShops).get();
-      final activeShops = shopsSnap.docs.where((d) => (d.data()['isActive'] as bool?) ?? true).length;
-      final ordersSnap = await _firestore.collection(collectionOrders).get();
+    final shopsSnap = await _firestore.collection(collectionShops).get();
+    final activeShops = shopsSnap.docs.where((d) => (d.data()['isActive'] as bool?) ?? true).length;
+    final ordersSnap = await _firestore.collection(collectionOrders).get();
 
-      double totalSales = 0.0;
-      for (final doc in ordersSnap.docs) {
-        final amt = (doc.data()['totalAmount'] as num?)?.toDouble() ?? 0.0;
-        totalSales += amt;
+    double totalSales = 0.0;
+    for (final doc in ordersSnap.docs) {
+      final data = doc.data();
+      final status = (data['status'] as String? ?? '').toLowerCase().trim();
+      // Sales definition: Only delivered or collected customer orders contribute to authoritative revenue
+      if (status == 'delivered' || status == 'collected') {
+        final sub = (data['subtotal'] as num?)?.toDouble() ??
+            (((data['totalAmount'] as num?)?.toDouble() ?? 0.0) -
+                ((data['deliveryFee'] as num?)?.toDouble() ?? 0.0));
+        totalSales += (sub > 0 ? sub : 0.0);
       }
-
-      return {
-        'totalShops': shopsSnap.docs.length,
-        'activeShops': activeShops,
-        'totalOrders': ordersSnap.docs.length,
-        'totalSales': totalSales,
-      };
-    } catch (_) {
-      return {
-        'totalShops': 0,
-        'activeShops': 0,
-        'totalOrders': 0,
-        'totalSales': 0.0,
-      };
     }
+
+    return {
+      'totalShops': shopsSnap.docs.length,
+      'activeShops': activeShops,
+      'totalOrders': ordersSnap.docs.length,
+      'totalSales': totalSales,
+    };
   }
 
   // --- Professional Categories CRUD ---
@@ -172,8 +170,13 @@ class ProfessionalAdminRemoteDataSource {
     required double price,
     required int durationDays,
     required int maxProducts,
+    int maxVariantsPerProduct = 5,
     required int maxImagesPerMonth,
     required int storageMb,
+    bool advancedAnalytics = false,
+    bool promotionalTools = false,
+    bool lowStockAlerts = true,
+    bool customAttributes = true,
   }) async {
     if (name.trim().isEmpty) {
       throw ArgumentError('Plan name cannot be empty.');
@@ -193,8 +196,23 @@ class ProfessionalAdminRemoteDataSource {
       'price': price,
       'durationDays': durationDays,
       'maxProducts': maxProducts,
+      'productLimit': maxProducts,
+      'maxVariantsPerProduct': maxVariantsPerProduct,
+      'variantLimit': maxVariantsPerProduct,
       'maxImagesPerMonth': maxImagesPerMonth,
+      'imageLimit': maxImagesPerMonth,
       'storageMb': storageMb,
+      'storageLimitMb': storageMb,
+      'advancedAnalytics': advancedAnalytics,
+      'promotionalTools': promotionalTools,
+      'lowStockAlerts': lowStockAlerts,
+      'customAttributes': customAttributes,
+      'features': {
+        'advancedAnalytics': advancedAnalytics,
+        'promotionalTools': promotionalTools,
+        'lowStockAlerts': lowStockAlerts,
+        'customAttributes': customAttributes,
+      },
       'isActive': true,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
@@ -215,8 +233,13 @@ class ProfessionalAdminRemoteDataSource {
     required double price,
     required int durationDays,
     required int maxProducts,
+    int maxVariantsPerProduct = 5,
     required int maxImagesPerMonth,
     required int storageMb,
+    bool? advancedAnalytics,
+    bool? promotionalTools,
+    bool? lowStockAlerts,
+    bool? customAttributes,
     bool? isActive,
   }) async {
     if (planId.trim().isEmpty) {
@@ -238,10 +261,27 @@ class ProfessionalAdminRemoteDataSource {
       'price': price,
       'durationDays': durationDays,
       'maxProducts': maxProducts,
+      'productLimit': maxProducts,
+      'maxVariantsPerProduct': maxVariantsPerProduct,
+      'variantLimit': maxVariantsPerProduct,
       'maxImagesPerMonth': maxImagesPerMonth,
+      'imageLimit': maxImagesPerMonth,
       'storageMb': storageMb,
+      'storageLimitMb': storageMb,
       'updatedAt': FieldValue.serverTimestamp(),
     };
+    if (advancedAnalytics != null) payload['advancedAnalytics'] = advancedAnalytics;
+    if (promotionalTools != null) payload['promotionalTools'] = promotionalTools;
+    if (lowStockAlerts != null) payload['lowStockAlerts'] = lowStockAlerts;
+    if (customAttributes != null) payload['customAttributes'] = customAttributes;
+    if (advancedAnalytics != null || promotionalTools != null || lowStockAlerts != null || customAttributes != null) {
+      payload['features'] = {
+        'advancedAnalytics': advancedAnalytics ?? false,
+        'promotionalTools': promotionalTools ?? false,
+        'lowStockAlerts': lowStockAlerts ?? true,
+        'customAttributes': customAttributes ?? true,
+      };
+    }
     if (isActive != null) {
       payload['isActive'] = isActive;
     }
@@ -347,6 +387,102 @@ class ProfessionalAdminRemoteDataSource {
       'cancelledOrders': cancelledOrders,
       'totalOrderValue': totalOrderValue,
       'latestPayment': latestPayment,
+    };
+  }
+
+  /// Fetches 7-day delivered sales totals (IST-adjusted) for the bar chart.
+  /// Returns a list of 7 entries: [{label: 'Mon 03', sales: 1200.0}, ...]
+  /// ordered from 6 days ago → today.
+  Future<List<Map<String, dynamic>>> fetchWeeklySalesData() async {
+    final now = DateTime.now().toUtc();
+    // Start of 7 days ago (UTC midnight)
+    final weekStart = DateTime.utc(now.year, now.month, now.day)
+        .subtract(const Duration(days: 6));
+
+    final snap = await _firestore
+        .collection(collectionOrders)
+        .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(weekStart))
+        .get()
+        .timeout(const Duration(seconds: 8));
+
+    // Bucket by UTC date string 'yyyy-MM-dd'
+    final Map<String, double> buckets = {};
+    for (var i = 0; i < 7; i++) {
+      final day = weekStart.add(Duration(days: i));
+      final key =
+          '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+      buckets[key] = 0.0;
+    }
+
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      final status = (data['status'] as String? ?? '').toLowerCase();
+      if (status != 'delivered' && status != 'collected') continue;
+
+      final ts = data['createdAt'];
+      DateTime? dt;
+      if (ts is Timestamp) {
+        dt = ts.toDate().toUtc();
+      }
+      if (dt == null) continue;
+
+      final key =
+          '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+      if (buckets.containsKey(key)) {
+        final sub = (data['subtotal'] as num?)?.toDouble() ??
+            (((data['totalAmount'] as num?)?.toDouble() ?? 0.0) -
+                ((data['deliveryFee'] as num?)?.toDouble() ?? 0.0));
+        buckets[key] = (buckets[key] ?? 0.0) + (sub > 0 ? sub : 0.0);
+      }
+    }
+
+    const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const monthLabels = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+
+    final result = <Map<String, dynamic>>[];
+    for (var i = 0; i < 7; i++) {
+      final day = weekStart.add(Duration(days: i));
+      final key =
+          '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+      final dayOfWeek = dayLabels[day.weekday - 1]; // weekday 1=Mon
+      final label = '$dayOfWeek ${day.day.toString().padLeft(2, '0')} ${monthLabels[day.month - 1]}';
+      result.add({'label': label, 'sales': buckets[key] ?? 0.0});
+    }
+    return result;
+  }
+
+  /// Fetches order status breakdown for the donut chart.
+  /// Returns {delivered, preparing, pending, cancelled, total}.
+  Future<Map<String, int>> fetchOrderStatusBreakdown() async {
+    final snap = await _firestore
+        .collection(collectionOrders)
+        .get()
+        .timeout(const Duration(seconds: 8));
+
+    int delivered = 0, preparing = 0, pending = 0, cancelled = 0;
+    for (final doc in snap.docs) {
+      final status =
+          ((doc.data()['status'] as String?) ?? '').toLowerCase().trim();
+      if (status == 'delivered' || status == 'collected') {
+        delivered++;
+      } else if (status == 'preparing' || status == 'accepted') {
+        preparing++;
+      } else if (status == 'placed') {
+        pending++;
+      } else if (status == 'cancelled' || status == 'rejected') {
+        cancelled++;
+      }
+    }
+
+    return {
+      'delivered': delivered,
+      'preparing': preparing,
+      'pending': pending,
+      'cancelled': cancelled,
+      'total': snap.docs.length,
     };
   }
 }

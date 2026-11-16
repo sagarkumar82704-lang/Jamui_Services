@@ -9,6 +9,9 @@ const {
   DEFAULT_FREE_TIER_LIMITS
 } = require('../r2_storage_upload_handler');
 
+process.env.R2_BUCKET_NAME = 'test-public-bucket';
+process.env.R2_PRIVATE_BUCKET_NAME = 'test-private-bucket';
+
 console.log('================================================================');
 console.log('  JAMUI SERVICES — R2 STORAGE QUOTA & SECURITY TEST SUITE       ');
 console.log('================================================================\n');

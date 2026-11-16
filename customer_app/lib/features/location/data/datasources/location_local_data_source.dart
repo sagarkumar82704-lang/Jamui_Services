@@ -29,25 +29,53 @@ class LocationLocalDataSourceImpl implements LocationLocalDataSource {
     try {
       final jsonStr = jsonEncode(location.toMap());
       await prefs?.setString(_keyCachedLocation, jsonStr);
+    } catch (e) {
+      debugPrint('⚠️ [LocationLocalDataSource] Error saving location to SharedPreferences: $e');
+    }
 
+    try {
       // Also persist to current logged in customer's profile if Firebase is active
-      final user = auth?.currentUser ?? FirebaseAuth.instance.currentUser;
+      User? user = auth?.currentUser;
+      if (user == null && auth == null) {
+        try {
+          user = FirebaseAuth.instance.currentUser;
+        } catch (_) {}
+      }
+
       if (user != null) {
         final fs = firestore ?? FirebaseFirestore.instance;
-        await fs.collection('customers').doc(user.uid).set({
+        final locationData = <String, dynamic>{
           'latitude': location.latitude,
           'longitude': location.longitude,
           'jamuiArea': location.placeName,
           'address': location.formattedAddress,
+          'formattedAddress': location.formattedAddress,
+          'village': location.village,
+          'locality': location.locality,
+          'suburb': location.suburb,
+          'block': location.block,
           'city': location.city,
           'district': location.district,
           'state': location.state,
           'pincode': location.pincode,
           'lastLocationUpdatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true)).timeout(const Duration(seconds: 4));
+        };
+
+        await Future.wait([
+          fs
+              .collection('customers')
+              .doc(user.uid)
+              .set(locationData, SetOptions(merge: true))
+              .timeout(const Duration(seconds: 4)),
+          fs
+              .collection('users')
+              .doc(user.uid)
+              .set(locationData, SetOptions(merge: true))
+              .timeout(const Duration(seconds: 4)),
+        ]);
       }
     } catch (e) {
-      debugPrint('⚠️ [LocationLocalDataSource] Error caching location: $e');
+      debugPrint('⚠️ [LocationLocalDataSource] Error syncing location to Firestore: $e');
     }
   }
 

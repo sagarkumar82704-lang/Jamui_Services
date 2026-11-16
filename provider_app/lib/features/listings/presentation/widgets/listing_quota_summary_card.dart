@@ -60,15 +60,20 @@ class ListingQuotaSummaryCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Row(
-                children: [
-                  Icon(Icons.pie_chart_outline_rounded, color: AppColors.primary, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'प्लान कोटा व स्टोरेज उपयोग',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
-                  ),
-                ],
+              const Expanded(
+                child: Row(
+                  children: [
+                    Icon(Icons.pie_chart_outline_rounded, color: AppColors.primary, size: 20),
+                    SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'प्लान कोटा व स्टोरेज उपयोग',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               InkWell(
                 onTap: onUpgradePressed,
@@ -156,7 +161,14 @@ class ListingQuotaSummaryCard extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
             Text(valueText, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
           ],
         ),

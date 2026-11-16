@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../../core/services/location_service.dart';
 import '../../domain/entities/paginated_providers_entity.dart';
+import '../../domain/entities/service_provider_entity.dart';
 import '../models/service_category_model.dart';
 import '../models/service_provider_model.dart';
 import 'customer_discovery_remote_data_source.dart';
@@ -57,6 +58,8 @@ class FirebaseCustomerDiscoveryRemoteDataSource
     double? customerLongitude,
     double? maxRadiusKm,
     String? customerId,
+    String? customerVillage,
+    String? customerBlock,
   }) async {
     final paginated = await fetchPaginatedProviders(
       categoryId: categoryId,
@@ -66,6 +69,8 @@ class FirebaseCustomerDiscoveryRemoteDataSource
       customerLongitude: customerLongitude,
       maxRadiusKm: maxRadiusKm,
       customerId: customerId,
+      customerVillage: customerVillage,
+      customerBlock: customerBlock,
       limit: (categoryId != null && categoryId.isNotEmpty && categoryId != 'all') ? 30 : 20,
       lastDocumentCursor: null,
     );
@@ -81,6 +86,8 @@ class FirebaseCustomerDiscoveryRemoteDataSource
     double? customerLongitude,
     double? maxRadiusKm,
     String? customerId,
+    String? customerVillage,
+    String? customerBlock,
     int limit = 12,
     dynamic lastDocumentCursor,
   }) async {
@@ -224,12 +231,14 @@ class FirebaseCustomerDiscoveryRemoteDataSource
       }).toList();
     }
 
-    // -- 5. LOCATION VALIDATION, RADIUS CHECK & NEAREST-FIRST SORTING --
+    // -- 5. LOCATION VALIDATION, RADIUS CHECK & 3-TIER PRIORITY + NEAREST-FIRST SORTING --
     list = filterAndSortProviders(
       providers: list,
       customerLatitude: customerLatitude,
       customerLongitude: customerLongitude,
       maxRadiusKm: maxRadiusKm,
+      customerVillage: customerVillage,
+      customerBlock: customerBlock,
     );
 
     return PaginatedProvidersResult(
@@ -240,17 +249,85 @@ class FirebaseCustomerDiscoveryRemoteDataSource
     );
   }
 
-  /// Authoritative provider filtering & nearest-first sorting
+  static bool _containsLocationToken(String text, String targetLower) {
+    if (text.isEmpty || targetLower.isEmpty) return false;
+    final norm = text.trim().toLowerCase();
+    if (norm == targetLower) return true;
+    final parts = norm
+        .split(RegExp(r'[,/\-()|\s]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.contains(targetLower)) return true;
+    return norm.contains(targetLower);
+  }
+
+  static bool matchesProviderVillage(ServiceProviderEntity p, String customerVillageLower) {
+    if (customerVillageLower.isEmpty) return false;
+    final pVillage = p.village.trim().toLowerCase();
+    final pLocality = p.locality.trim().toLowerCase();
+    if (pVillage.isNotEmpty && pVillage == customerVillageLower) return true;
+    if (pLocality.isNotEmpty && pLocality == customerVillageLower) return true;
+    if (pVillage.isEmpty) {
+      if (_containsLocationToken(p.jamuiArea, customerVillageLower)) return true;
+      if (_containsLocationToken(p.fullAddress, customerVillageLower)) return true;
+    }
+    return false;
+  }
+
+  static bool matchesProviderBlock(ServiceProviderEntity p, String customerBlockLower) {
+    if (customerBlockLower.isEmpty) return false;
+    final pBlock = p.block.trim().toLowerCase();
+    final pCity = p.city.trim().toLowerCase();
+    if (pBlock.isNotEmpty && pBlock == customerBlockLower) return true;
+    if (pCity.isNotEmpty && pCity == customerBlockLower) return true;
+    if (pBlock.isEmpty) {
+      if (_containsLocationToken(p.jamuiArea, customerBlockLower)) return true;
+      if (_containsLocationToken(p.fullAddress, customerBlockLower)) return true;
+    }
+    return false;
+  }
+
+  /// Computes 3-tier provider matching priority:
+  /// - Tier 1: Same Village AND Same Block (when both are reliably available)
+  /// - Tier 2: Same Block (when Block is available)
+  /// - Tier 3: Other nearby eligible providers sorted by GPS distance
+  static int computeLocationMatchTier(
+    ServiceProviderEntity p, {
+    String? customerVillage,
+    String? customerBlock,
+  }) {
+    final cleanVillage = (customerVillage ?? '').trim().toLowerCase();
+    final cleanBlock = (customerBlock ?? '').trim().toLowerCase();
+
+    final bool hasVillageMatch = cleanVillage.isNotEmpty && matchesProviderVillage(p, cleanVillage);
+    final bool hasBlockMatch = cleanBlock.isNotEmpty && matchesProviderBlock(p, cleanBlock);
+
+    if (cleanVillage.isNotEmpty && cleanBlock.isNotEmpty && hasVillageMatch && hasBlockMatch) {
+      return 1;
+    }
+    if (cleanBlock.isNotEmpty && hasBlockMatch) {
+      return 2;
+    }
+    if (cleanBlock.isEmpty && cleanVillage.isNotEmpty && hasVillageMatch) {
+      return 1;
+    }
+    return 3;
+  }
+
+  /// Authoritative provider filtering & 3-tier location priority + nearest-first sorting
   List<ServiceProviderModel> filterAndSortProviders({
     required List<ServiceProviderModel> providers,
     double? customerLatitude,
     double? customerLongitude,
     double? maxRadiusKm,
+    String? customerVillage,
+    String? customerBlock,
   }) {
     // 1. Strict approval & business eligibility filter
     List<ServiceProviderModel> list = providers.where((p) => p.isApprovedAndLive).toList();
 
-    // 2. Location validation, radius check & nearest-first sorting
+    // 2. Location validation, radius check & 3-tier priority + nearest-first sorting
     final bool hasValidCustomerLocation = LocationService.isValidCoordinate(customerLatitude, customerLongitude);
 
     if (hasValidCustomerLocation) {
@@ -286,9 +363,25 @@ class FirebaseCustomerDiscoveryRemoteDataSource
         }
       }
 
-      // Sort strictly nearest-first (ascending distance: closest provider first).
-      // If distances are identical, break tie with higher customer rating first.
+      // Sort by:
+      // Priority 1: Same Village + Same Block (Tier 1)
+      // Priority 2: Same Block (Tier 2)
+      // Priority 3: Nearby by GPS distance (Tier 3)
+      // Within each tier, sort strictly nearest-first (ascending distance), then higher rating.
       eligibleWithDistance.sort((a, b) {
+        final tierA = computeLocationMatchTier(
+          a,
+          customerVillage: customerVillage,
+          customerBlock: customerBlock,
+        );
+        final tierB = computeLocationMatchTier(
+          b,
+          customerVillage: customerVillage,
+          customerBlock: customerBlock,
+        );
+        final tierCmp = tierA.compareTo(tierB);
+        if (tierCmp != 0) return tierCmp;
+
         final distCompare = (a.distanceKm ?? double.infinity).compareTo(b.distanceKm ?? double.infinity);
         if (distCompare != 0) return distCompare;
         return b.rating.compareTo(a.rating);
@@ -300,8 +393,22 @@ class FirebaseCustomerDiscoveryRemoteDataSource
       // Zero fake distance: ensure distanceKm is strictly null.
       final fallbackList = list.map((p) => p.copyWith(distanceKm: null)).toList();
 
-      // Graceful fallback sort: highest rated & most experienced providers first
+      // Graceful fallback sort: Village/Block tier first (if manual location set without coords),
+      // then highest rated & most experienced providers first
       fallbackList.sort((a, b) {
+        final tierA = computeLocationMatchTier(
+          a,
+          customerVillage: customerVillage,
+          customerBlock: customerBlock,
+        );
+        final tierB = computeLocationMatchTier(
+          b,
+          customerVillage: customerVillage,
+          customerBlock: customerBlock,
+        );
+        final tierCmp = tierA.compareTo(tierB);
+        if (tierCmp != 0) return tierCmp;
+
         final ratingCmp = b.rating.compareTo(a.rating);
         if (ratingCmp != 0) return ratingCmp;
         return b.experienceYears.compareTo(a.experienceYears);

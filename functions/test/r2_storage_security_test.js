@@ -6,8 +6,6 @@ const {
   verifyAndEnforceObjectLimits,
   resolveBucketForFolder,
   resolveBucketForObjectKey,
-  DEFAULT_PUBLIC_BUCKET,
-  DEFAULT_PRIVATE_BUCKET,
   ALLOWED_FOLDERS,
   ALLOWED_MIME_TYPES,
   MAX_FILE_SIZE_BYTES
@@ -485,24 +483,27 @@ async function runTests() {
 
   // TEST 26: Dual-Bucket Isolation: Public folders map to public bucket; certificates & KYC map to private bucket
   try {
-    const pubProfile = resolveBucketForFolder('profile');
-    const pubBiz = resolveBucketForFolder('business');
-    const pubWorkplace = resolveBucketForFolder('workplace');
-    const privCert = resolveBucketForFolder('certificates');
-    const privKyc = resolveBucketForFolder('kyc');
+    const TEST_PUBLIC_BUCKET = 'test-public-bucket';
+    const TEST_PRIVATE_BUCKET = 'test-private-bucket';
 
-    const keyProfile = resolveBucketForObjectKey('providers/uid1/profile/pic.jpg');
-    const keyCert = resolveBucketForObjectKey('providers/uid1/certificates/cert.pdf');
-    const keyKyc = resolveBucketForObjectKey('providers/uid1/kyc/doc.pdf');
+    const pubProfile = resolveBucketForFolder('profile', TEST_PUBLIC_BUCKET, TEST_PRIVATE_BUCKET);
+    const pubBiz = resolveBucketForFolder('business', TEST_PUBLIC_BUCKET, TEST_PRIVATE_BUCKET);
+    const pubWorkplace = resolveBucketForFolder('workplace', TEST_PUBLIC_BUCKET, TEST_PRIVATE_BUCKET);
+    const privCert = resolveBucketForFolder('certificates', TEST_PUBLIC_BUCKET, TEST_PRIVATE_BUCKET);
+    const privKyc = resolveBucketForFolder('kyc', TEST_PUBLIC_BUCKET, TEST_PRIVATE_BUCKET);
 
-    const isDualCorrect = pubProfile === DEFAULT_PUBLIC_BUCKET &&
-                          pubBiz === DEFAULT_PUBLIC_BUCKET &&
-                          pubWorkplace === DEFAULT_PUBLIC_BUCKET &&
-                          privCert === DEFAULT_PRIVATE_BUCKET &&
-                          privKyc === DEFAULT_PRIVATE_BUCKET &&
-                          keyProfile === DEFAULT_PUBLIC_BUCKET &&
-                          keyCert === DEFAULT_PRIVATE_BUCKET &&
-                          keyKyc === DEFAULT_PRIVATE_BUCKET;
+    const keyProfile = resolveBucketForObjectKey('providers/uid1/profile/pic.jpg', TEST_PUBLIC_BUCKET, TEST_PRIVATE_BUCKET);
+    const keyCert = resolveBucketForObjectKey('providers/uid1/certificates/cert.pdf', TEST_PUBLIC_BUCKET, TEST_PRIVATE_BUCKET);
+    const keyKyc = resolveBucketForObjectKey('providers/uid1/kyc/doc.pdf', TEST_PUBLIC_BUCKET, TEST_PRIVATE_BUCKET);
+
+    const isDualCorrect = pubProfile === TEST_PUBLIC_BUCKET &&
+                          pubBiz === TEST_PUBLIC_BUCKET &&
+                          pubWorkplace === TEST_PUBLIC_BUCKET &&
+                          privCert === TEST_PRIVATE_BUCKET &&
+                          privKyc === TEST_PRIVATE_BUCKET &&
+                          keyProfile === TEST_PUBLIC_BUCKET &&
+                          keyCert === TEST_PRIVATE_BUCKET &&
+                          keyKyc === TEST_PRIVATE_BUCKET;
 
     record('Dual-bucket isolation correctly routes private documents to private bucket and photos to public bucket', isDualCorrect);
   } catch (e) {
@@ -525,7 +526,7 @@ async function runTests() {
       accountId: 'acc1',
       accessKeyId: 'key1',
       secretAccessKey: 'sec1',
-      bucketName: DEFAULT_PUBLIC_BUCKET,
+      bucketName: 'test-public-bucket',
       objectKey: 'providers/p1/profile/pic.jpg',
       httpRequestFn: mockHttp
     });
@@ -556,7 +557,7 @@ async function runTests() {
       accountId: 'acc1',
       accessKeyId: 'key1',
       secretAccessKey: 'sec1',
-      bucketName: DEFAULT_PUBLIC_BUCKET,
+      bucketName: 'test-public-bucket',
       objectKey: 'providers/p1/profile/oversized.jpg',
       httpRequestFn: mockHttp
     });
@@ -586,7 +587,7 @@ async function runTests() {
       accountId: 'acc1',
       accessKeyId: 'key1',
       secretAccessKey: 'sec1',
-      bucketName: DEFAULT_PUBLIC_BUCKET,
+      bucketName: 'test-public-bucket',
       objectKey: 'providers/p1/profile/malware.exe',
       httpRequestFn: mockHttp
     });
@@ -608,13 +609,85 @@ async function runTests() {
       accountId: 'acc1',
       accessKeyId: 'key1',
       secretAccessKey: 'sec1',
-      bucketName: DEFAULT_PUBLIC_BUCKET,
+      bucketName: 'test-public-bucket',
       objectKey: 'providers/p1/profile/nonexistent.jpg',
       httpRequestFn: mockHttp
     });
     record('Server-side verification throws not-found for non-existent object', false);
   } catch (e) {
     record('Server-side verification throws not-found for non-existent object', e.code === 'not-found');
+  }
+
+  // TEST 31: Fail-closed when R2_BUCKET_NAME is missing or empty
+  try {
+    resolveBucketForFolder('profile', '', 'valid-private-bucket');
+    record('Missing R2_BUCKET_NAME for public folder fails closed with failed-precondition', false);
+  } catch (e) {
+    record('Missing R2_BUCKET_NAME for public folder fails closed with failed-precondition', e.code === 'failed-precondition' && e.message.includes('Production fallback is strictly disabled'));
+  }
+
+  // TEST 32: Fail-closed when R2_PRIVATE_BUCKET_NAME is missing or empty
+  try {
+    resolveBucketForFolder('certificates', 'valid-public-bucket', '');
+    record('Missing R2_PRIVATE_BUCKET_NAME for private folder fails closed with failed-precondition', false);
+  } catch (e) {
+    record('Missing R2_PRIVATE_BUCKET_NAME for private folder fails closed with failed-precondition', e.code === 'failed-precondition' && e.message.includes('Production fallback is strictly disabled'));
+  }
+
+  // TEST 33: resolveBucketForObjectKey fails closed on missing bucket configuration
+  try {
+    resolveBucketForObjectKey('providers/p1/certificates/cert.pdf', 'valid-pub', '   ');
+    record('resolveBucketForObjectKey on whitespace private bucket fails closed', false);
+  } catch (e) {
+    record('resolveBucketForObjectKey on whitespace private bucket fails closed', e.code === 'failed-precondition' && e.message.includes('Production fallback is strictly disabled'));
+  }
+
+  // TEST 34: handleStorageObjectDelete rejects missing public/private bucket configuration
+  try {
+    const { handleStorageObjectDelete } = require('../r2_storage_upload_handler');
+    await handleStorageObjectDelete({
+      auth: { uid: 'p1' },
+      objectKey: 'providers/p1/profile/img.jpg',
+      accountId: 'acc1',
+      accessKeyId: 'key1',
+      secretAccessKey: 'sec1',
+      publicBucket: '',
+      privateBucket: 'priv-bucket'
+    });
+    record('handleStorageObjectDelete with empty publicBucket fails closed', false);
+  } catch (e) {
+    record('handleStorageObjectDelete with empty publicBucket fails closed', e.code === 'failed-precondition' && e.message.includes('Production fallback is strictly disabled'));
+  }
+
+  // TEST 35: Production bucket fallback elimination (zero production bucket names returned)
+  let productionBucketLeaked = false;
+  try {
+    const resPub = resolveBucketForFolder('profile');
+    if (resPub === 'jamui-services-public-prod') productionBucketLeaked = true;
+  } catch (e) {
+    // Expected to fail closed!
+  }
+  try {
+    const resPriv = resolveBucketForFolder('kyc');
+    if (resPriv === 'jamui-services-private-prod') productionBucketLeaked = true;
+  } catch (e) {
+    // Expected to fail closed!
+  }
+  record('Zero production fallback: default bucket names are never returned without explicit configuration', !productionBucketLeaked);
+
+  // TEST 36: Presigned URL generator rejects missing or empty bucketName
+  try {
+    generateR2PresignedPutUrl({
+      accountId: 'acc1',
+      accessKeyId: 'key1',
+      secretAccessKey: 'sec1',
+      bucketName: '   ', // empty whitespace
+      objectKey: 'key1',
+      mimeType: 'image/jpeg'
+    });
+    record('Presigned URL generator with whitespace bucketName fails closed', false);
+  } catch (e) {
+    record('Presigned URL generator with whitespace bucketName fails closed', e.code === 'failed-precondition');
   }
 
   console.log('\n================================================================');

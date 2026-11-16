@@ -1,9 +1,6 @@
 const crypto = require('crypto');
 const https = require('https');
 
-const DEFAULT_PUBLIC_BUCKET = 'jamui-services-public-prod';
-const DEFAULT_PRIVATE_BUCKET = 'jamui-services-private-prod';
-
 /**
  * Jamui Services - Cloudflare R2 Upload Infrastructure & Security Validator
  *
@@ -36,7 +33,8 @@ const ALLOWED_FOLDERS = Object.freeze([
   'reviews',
   'certificates',
   'kyc',
-  'listings'
+  'listings',
+  'products'
 ]);
 
 const DEFAULT_FREE_TIER_LIMITS = Object.freeze({
@@ -317,6 +315,120 @@ async function validateAndGenerateUploadKey({ auth, data, verifyActiveAdminFn, d
     }
 
     objectKey = `reviews/${callerUid}/${cleanBookingId}/rev_${timestamp}_${randomSuffix}.${ext}`;
+  } else if (folder === 'products') {
+    // Professional Seller uploading product images for marketplace store
+    if (!db) {
+      const err = new Error('Database service unavailable for shop validation.');
+      err.code = 'failed-precondition';
+      throw err;
+    }
+
+    let shopSnap = null;
+    const cleanTargetShopId = sanitizeIdentifier(targetId, '');
+
+    // 1. Resolve Shop Record by targetId, ownerUid, or direct doc ID
+    if (cleanTargetShopId) {
+      try {
+        shopSnap = await db.collection('diamond_shops').doc(cleanTargetShopId).get();
+        if (!shopSnap.exists) {
+          const err = new Error(`Professional shop '${cleanTargetShopId}' not found.`);
+          err.code = 'not-found';
+          throw err;
+        }
+      } catch (e) {
+        if (e.code === 'not-found') throw e;
+        const err = new Error(`Database error while retrieving shop: ${e?.message || e}`);
+        err.code = 'unavailable';
+        throw err;
+      }
+    } else {
+      // Auto-resolve caller's shop when targetId is not explicitly specified
+      try {
+        const querySnap = await db.collection('diamond_shops').where('ownerUid', '==', callerUid).limit(1).get();
+        if (!querySnap.empty) {
+          shopSnap = querySnap.docs[0];
+        } else {
+          shopSnap = await db.collection('diamond_shops').doc(callerUid).get();
+        }
+      } catch (e) {
+        const err = new Error(`Database error while querying seller shop: ${e?.message || e}`);
+        err.code = 'unavailable';
+        throw err;
+      }
+    }
+
+    if (!shopSnap || !shopSnap.exists) {
+      const err = new Error('Professional shop account not found. Only registered professional sellers can upload product media.');
+      err.code = 'not-found';
+      throw err;
+    }
+
+    const shopData = (typeof shopSnap.data === 'function' ? shopSnap.data() : shopSnap.data) || {};
+    const effectiveShopId = shopSnap.id;
+
+    // 2. Ownership Verification
+    const shopOwnerUid = (shopData.ownerUid || effectiveShopId || '').toString().trim();
+    if (shopOwnerUid !== callerUid && effectiveShopId !== callerUid) {
+      let isCallerAdmin = false;
+      if (typeof verifyActiveAdminFn === 'function') {
+        try {
+          await verifyActiveAdminFn({ auth });
+          isCallerAdmin = true;
+        } catch (_) {
+          isCallerAdmin = false;
+        }
+      }
+      if (!isCallerAdmin) {
+        const err = new Error('Unauthorized: You can only upload product images for your own professional shop.');
+        err.code = 'permission-denied';
+        throw err;
+      }
+    }
+
+    // 3. Shop Status and Approval Verification
+    if (shopData.isDeleted === true) {
+      const err = new Error('Shop has been deleted.');
+      err.code = 'not-found';
+      throw err;
+    }
+
+    const shopStatus = (shopData.status || '').toString().toLowerCase().trim();
+    if (shopStatus === 'suspended' || shopStatus === 'blocked' || shopStatus === 'rejected') {
+      const err = new Error(`Shop account is ${shopStatus}. Product image uploads are suspended.`);
+      err.code = 'permission-denied';
+      throw err;
+    }
+
+    if (shopData.isActive === false) {
+      const err = new Error('Shop account is inactive. Product image uploads are not permitted.');
+      err.code = 'failed-precondition';
+      throw err;
+    }
+
+    const isApproved = shopData.isApproved === true || shopStatus === 'approved';
+    if (!isApproved) {
+      const err = new Error('Shop is not approved by administrator. Product image uploads require an approved shop.');
+      err.code = 'failed-precondition';
+      throw err;
+    }
+
+    // 4. Subscription Status Verification
+    if (shopData.isSubscriptionActive !== true) {
+      const expiry = shopData.subscriptionExpiry;
+      let expDate = null;
+      if (expiry && typeof expiry.toDate === 'function') expDate = expiry.toDate();
+      else if (expiry instanceof Date) expDate = expiry;
+      else if (expiry) expDate = new Date(expiry);
+
+      if (!expDate || expDate.getTime() < Date.now()) {
+        const err = new Error('Shop subscription is inactive or expired. Please activate your subscription to upload products.');
+        err.code = 'failed-precondition';
+        throw err;
+      }
+    }
+
+    // 5. Generate Safe Server-Controlled Object Key (Public Bucket)
+    objectKey = `providers/${callerUid}/products/prod_${timestamp}_${randomSuffix}.${ext}`;
   }
 
   // 7. Server-Side Plan Quota & Limits Enforcement for Provider Media
@@ -456,13 +568,18 @@ function generateR2PresignedPutUrl({
   fileSize,
   expiresInSeconds = 600 // 10 minutes
 }) {
-  if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
-    const err = new Error('R2 configuration secrets are incomplete. Check R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME.');
+  const acc = typeof accountId === 'string' ? accountId.trim() : '';
+  const key = typeof accessKeyId === 'string' ? accessKeyId.trim() : '';
+  const sec = typeof secretAccessKey === 'string' ? secretAccessKey.trim() : '';
+  const bkt = typeof bucketName === 'string' ? bucketName.trim() : '';
+
+  if (!acc || !key || !sec || !bkt) {
+    const err = new Error('R2 configuration secrets are incomplete or empty. Check R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME.');
     err.code = 'failed-precondition';
     throw err;
   }
 
-  const host = `${accountId.trim()}.r2.cloudflarestorage.com`;
+  const host = `${acc}.r2.cloudflarestorage.com`;
   const region = 'auto';
   const service = 's3';
 
@@ -544,13 +661,18 @@ function generateR2PresignedGetUrl({
   objectKey,
   expiresInSeconds = 600 // 10 minutes
 }) {
-  if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
-    const err = new Error('R2 configuration secrets are incomplete. Check R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME.');
+  const acc = typeof accountId === 'string' ? accountId.trim() : '';
+  const key = typeof accessKeyId === 'string' ? accessKeyId.trim() : '';
+  const sec = typeof secretAccessKey === 'string' ? secretAccessKey.trim() : '';
+  const bkt = typeof bucketName === 'string' ? bucketName.trim() : '';
+
+  if (!acc || !key || !sec || !bkt) {
+    const err = new Error('R2 configuration secrets are incomplete or empty. Check R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME.');
     err.code = 'failed-precondition';
     throw err;
   }
 
-  const host = `${accountId.trim()}.r2.cloudflarestorage.com`;
+  const host = `${acc}.r2.cloudflarestorage.com`;
   const region = 'auto';
   const service = 's3';
 
@@ -616,14 +738,44 @@ function isPrivateFolder(folder) {
   return folder === 'certificates' || folder === 'kyc';
 }
 
-function resolveBucketForFolder(folder, publicBucket = DEFAULT_PUBLIC_BUCKET, privateBucket = DEFAULT_PRIVATE_BUCKET) {
-  return isPrivateFolder(folder) ? (privateBucket || DEFAULT_PRIVATE_BUCKET) : (publicBucket || DEFAULT_PUBLIC_BUCKET);
+function resolveBucketForFolder(folder, publicBucket, privateBucket) {
+  const isPrivate = isPrivateFolder(folder);
+  const effectivePub = typeof publicBucket === 'string' ? publicBucket.trim() : (process.env.R2_BUCKET_NAME || '').trim();
+  const effectivePriv = typeof privateBucket === 'string' ? privateBucket.trim() : (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+  const target = isPrivate ? effectivePriv : effectivePub;
+
+  if (!target) {
+    const bucketType = isPrivate ? 'R2_PRIVATE_BUCKET_NAME' : 'R2_BUCKET_NAME';
+    const err = new Error(`R2 configuration error: Missing or empty ${bucketType} for folder '${folder}'. Production fallback is strictly disabled.`);
+    err.code = 'failed-precondition';
+    throw err;
+  }
+  return target;
 }
 
-function resolveBucketForObjectKey(objectKey, publicBucket = DEFAULT_PUBLIC_BUCKET, privateBucket = DEFAULT_PRIVATE_BUCKET) {
-  if (!objectKey || typeof objectKey !== 'string') return publicBucket || DEFAULT_PUBLIC_BUCKET;
-  const isPrivate = objectKey.includes('/certificates/') || objectKey.includes('/kyc/');
-  return isPrivate ? (privateBucket || DEFAULT_PRIVATE_BUCKET) : (publicBucket || DEFAULT_PUBLIC_BUCKET);
+function resolveBucketForObjectKey(objectKey, publicBucket, privateBucket) {
+  const effectivePub = typeof publicBucket === 'string' ? publicBucket.trim() : (process.env.R2_BUCKET_NAME || '').trim();
+  const effectivePriv = typeof privateBucket === 'string' ? privateBucket.trim() : (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+
+  if (!objectKey || typeof objectKey !== 'string') {
+    if (!effectivePub) {
+      const err = new Error('R2 configuration error: Missing or empty R2_BUCKET_NAME. Production fallback is strictly disabled.');
+      err.code = 'failed-precondition';
+      throw err;
+    }
+    return effectivePub;
+  }
+  const cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
+  const isPrivate = cleanKey.includes('/certificates/') || cleanKey.includes('/kyc/');
+  const target = isPrivate ? effectivePriv : effectivePub;
+
+  if (!target) {
+    const bucketType = isPrivate ? 'R2_PRIVATE_BUCKET_NAME' : 'R2_BUCKET_NAME';
+    const err = new Error(`R2 configuration error: Missing or empty ${bucketType} for key '${objectKey}'. Production fallback is strictly disabled.`);
+    err.code = 'failed-precondition';
+    throw err;
+  }
+  return target;
 }
 
 /**
@@ -631,13 +783,18 @@ function resolveBucketForObjectKey(objectKey, publicBucket = DEFAULT_PUBLIC_BUCK
  */
 function makeSigV4Request({ method, accountId, accessKeyId, secretAccessKey, bucketName, objectKey, httpRequestFn = null }) {
   return new Promise((resolve, reject) => {
-    if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
-      const err = new Error('R2 configuration secrets are incomplete.');
+    const acc = typeof accountId === 'string' ? accountId.trim() : '';
+    const key = typeof accessKeyId === 'string' ? accessKeyId.trim() : '';
+    const sec = typeof secretAccessKey === 'string' ? secretAccessKey.trim() : '';
+    const bkt = typeof bucketName === 'string' ? bucketName.trim() : '';
+
+    if (!acc || !key || !sec || !bkt) {
+      const err = new Error('R2 configuration secrets are incomplete or empty. Production fallback is strictly disabled.');
       err.code = 'failed-precondition';
       return reject(err);
     }
 
-    const host = `${accountId.trim()}.r2.cloudflarestorage.com`;
+    const host = `${acc}.r2.cloudflarestorage.com`;
     const region = 'auto';
     const service = 's3';
 
@@ -827,8 +984,8 @@ async function handleStorageObjectDelete({
   accountId,
   accessKeyId,
   secretAccessKey,
-  publicBucket = DEFAULT_PUBLIC_BUCKET,
-  privateBucket = DEFAULT_PRIVATE_BUCKET,
+  publicBucket,
+  privateBucket,
   httpRequestFn = null
 }) {
   if (!auth || !auth.uid) {
@@ -842,6 +999,17 @@ async function handleStorageObjectDelete({
   if (!cleanKey || cleanKey.includes('..')) {
     const err = new Error('A valid object key is required.');
     err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const effectivePub = typeof publicBucket === 'string' ? publicBucket.trim() : (process.env.R2_BUCKET_NAME || '').trim();
+  const effectivePriv = typeof privateBucket === 'string' ? privateBucket.trim() : (process.env.R2_PRIVATE_BUCKET_NAME || '').trim();
+  if (!effectivePub || !effectivePriv) {
+    const missing = [];
+    if (!effectivePub) missing.push('R2_BUCKET_NAME');
+    if (!effectivePriv) missing.push('R2_PRIVATE_BUCKET_NAME');
+    const err = new Error(`R2 configuration error: Missing or empty configuration parameter(s): ${missing.join(', ')}. Production fallback is strictly disabled.`);
+    err.code = 'failed-precondition';
     throw err;
   }
 
@@ -868,6 +1036,27 @@ async function handleStorageObjectDelete({
         await verifyActiveAdminFn({ auth });
       } else {
         const err = new Error('Unauthorized to delete this review photo.');
+        err.code = 'permission-denied';
+        throw err;
+      }
+    }
+  } else if (cleanKey.startsWith('diamond_shops/')) {
+    const parts = cleanKey.split('/');
+    const shopId = parts[1];
+    let isOwner = false;
+    if (db) {
+      try {
+        const shopSnap = await db.collection('diamond_shops').doc(shopId).get();
+        if (shopSnap.exists && (shopSnap.data().ownerUid === callerUid || shopId === callerUid)) {
+          isOwner = true;
+        }
+      } catch (_) {}
+    }
+    if (!isOwner) {
+      if (typeof verifyActiveAdminFn === 'function') {
+        await verifyActiveAdminFn({ auth });
+      } else {
+        const err = new Error('Unauthorized to delete this shop object.');
         err.code = 'permission-denied';
         throw err;
       }
@@ -1024,12 +1213,217 @@ async function reconcileProviderStorageUsage({ db, providerId }) {
   return newUsage;
 }
 
+/**
+ * Uploads raw binary buffer to Cloudflare R2 using AWS SigV4 PUT.
+ * Used for server-side uploads from Web clients avoiding browser CORS.
+ */
+function putR2ObjectBytes({ accountId, accessKeyId, secretAccessKey, bucketName, objectKey, mimeType, buffer }) {
+  return new Promise((resolve, reject) => {
+    const acc = typeof accountId === 'string' ? accountId.trim() : '';
+    const key = typeof accessKeyId === 'string' ? accessKeyId.trim() : '';
+    const sec = typeof secretAccessKey === 'string' ? secretAccessKey.trim() : '';
+    const bkt = typeof bucketName === 'string' ? bucketName.trim() : '';
+
+    if (!acc || !key || !sec || !bkt) {
+      const err = new Error('R2 configuration secrets are incomplete.');
+      err.code = 'failed-precondition';
+      return reject(err);
+    }
+
+    const host = `${acc}.r2.cloudflarestorage.com`;
+    const region = 'auto';
+    const service = 's3';
+
+    const cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
+    const canonicalUri = `/${bkt}/${cleanKey.split('/').map(encodeURIComponent).join('/')}`;
+
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const dateStamp = amzDate.substring(0, 8);
+    const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+
+    const payloadHash = crypto.createHash('sha256').update(buffer).digest('hex');
+    const signedHeaders = 'content-length;content-type;host;x-amz-content-sha256;x-amz-date';
+    const canonicalHeaders = `content-length:${buffer.length}\ncontent-type:${mimeType.trim()}\nhost:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+    const canonicalQuery = '';
+
+    const canonicalRequest = [
+      'PUT',
+      canonicalUri,
+      canonicalQuery,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash
+    ].join('\n');
+
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credentialScope,
+      crypto.createHash('sha256').update(canonicalRequest, 'utf8').digest('hex')
+    ].join('\n');
+
+    function hmac(k, str) {
+      return crypto.createHmac('sha256', k).update(str, 'utf8').digest();
+    }
+
+    const kDate = hmac(`AWS4${sec}`, dateStamp);
+    const kRegion = hmac(kDate, region);
+    const kService = hmac(kRegion, service);
+    const kSigning = hmac(kService, 'aws4_request');
+
+    const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+    const authHeader = `AWS4-HMAC-SHA256 Credential=${key}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    const headers = {
+      'Host': host,
+      'Content-Type': mimeType.trim(),
+      'Content-Length': buffer.length.toString(),
+      'x-amz-date': amzDate,
+      'x-amz-content-sha256': payloadHash,
+      'Authorization': authHeader
+    };
+
+    const req = https.request({
+      method: 'PUT',
+      hostname: host,
+      port: 443,
+      path: canonicalUri,
+      headers
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 200 || res.statusCode === 204) {
+          resolve({ success: true, statusCode: res.statusCode, objectKey });
+        } else {
+          const err = new Error(`R2 upload rejected with status ${res.statusCode}: ${body}`);
+          err.statusCode = res.statusCode;
+          reject(err);
+        }
+      });
+    });
+
+    req.on('error', err => reject(err));
+    req.write(buffer);
+    req.end();
+  });
+}
+
+/**
+ * Configures S3 CORS on Cloudflare R2 bucket via SigV4 PUT /<bucket>?cors
+ */
+function setR2BucketCors({ accountId, accessKeyId, secretAccessKey, bucketName, allowedOrigins = ['*'] }) {
+  return new Promise((resolve, reject) => {
+    const acc = typeof accountId === 'string' ? accountId.trim() : '';
+    const key = typeof accessKeyId === 'string' ? accessKeyId.trim() : '';
+    const sec = typeof secretAccessKey === 'string' ? secretAccessKey.trim() : '';
+    const bkt = typeof bucketName === 'string' ? bucketName.trim() : '';
+
+    if (!acc || !key || !sec || !bkt) {
+      const err = new Error('R2 configuration secrets are incomplete.');
+      err.code = 'failed-precondition';
+      return reject(err);
+    }
+
+    const host = `${acc}.r2.cloudflarestorage.com`;
+    const region = 'auto';
+    const service = 's3';
+
+    const originsXml = allowedOrigins.map(o => `    <AllowedOrigin>${o}</AllowedOrigin>`).join('\n');
+    const corsXml = [
+      '<CORSConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">',
+      '  <CORSRule>',
+      originsXml,
+      '    <AllowedMethod>GET</AllowedMethod>',
+      '    <AllowedMethod>PUT</AllowedMethod>',
+      '    <AllowedMethod>POST</AllowedMethod>',
+      '    <AllowedMethod>HEAD</AllowedMethod>',
+      '    <AllowedMethod>DELETE</AllowedMethod>',
+      '    <AllowedHeader>*</AllowedHeader>',
+      '    <ExposeHeader>ETag</ExposeHeader>',
+      '    <MaxAgeSeconds>3600</MaxAgeSeconds>',
+      '  </CORSRule>',
+      '</CORSConfiguration>'
+    ].join('\n');
+
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const dateStamp = amzDate.substring(0, 8);
+    const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+
+    const canonicalUri = `/${bkt}`;
+    const canonicalQuery = 'cors=';
+
+    const payloadHash = crypto.createHash('sha256').update(corsXml, 'utf8').digest('hex');
+    const signedHeaders = 'content-type;host;x-amz-content-sha256;x-amz-date';
+    const canonicalHeaders = `content-type:application/xml\nhost:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+
+    const canonicalRequest = [
+      'PUT',
+      canonicalUri,
+      canonicalQuery,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash
+    ].join('\n');
+
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credentialScope,
+      crypto.createHash('sha256').update(canonicalRequest, 'utf8').digest('hex')
+    ].join('\n');
+
+    function hmac(k, str) {
+      return crypto.createHmac('sha256', k).update(str, 'utf8').digest();
+    }
+
+    const kDate = hmac(`AWS4${sec}`, dateStamp);
+    const kRegion = hmac(kDate, region);
+    const kService = hmac(kRegion, service);
+    const kSigning = hmac(kService, 'aws4_request');
+
+    const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+    const authHeader = `AWS4-HMAC-SHA256 Credential=${key}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    const headers = {
+      'Host': host,
+      'Content-Type': 'application/xml',
+      'Content-Length': Buffer.byteLength(corsXml, 'utf8').toString(),
+      'x-amz-date': amzDate,
+      'x-amz-content-sha256': payloadHash,
+      'Authorization': authHeader
+    };
+
+    const req = https.request({
+      method: 'PUT',
+      hostname: host,
+      port: 443,
+      path: `${canonicalUri}?cors`,
+      headers
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        resolve({ statusCode: res.statusCode, headers: res.headers, body });
+      });
+    });
+
+    req.on('error', err => reject(err));
+    req.write(corsXml);
+    req.end();
+  });
+}
+
 module.exports = {
   validateAndGenerateUploadKey,
   generateR2PresignedPutUrl,
   generateR2PresignedGetUrl,
   fetchR2ObjectMetadata,
   deleteR2Object,
+  putR2ObjectBytes,
+  setR2BucketCors,
   verifyAndEnforceObjectLimits,
   handleStorageObjectDelete,
   reconcileProviderStorageUsage,
@@ -1037,8 +1431,6 @@ module.exports = {
   isPrivateFolder,
   resolveBucketForFolder,
   resolveBucketForObjectKey,
-  DEFAULT_PUBLIC_BUCKET,
-  DEFAULT_PRIVATE_BUCKET,
   ALLOWED_FOLDERS,
   ALLOWED_MIME_TYPES,
   MAX_FILE_SIZE_BYTES,
